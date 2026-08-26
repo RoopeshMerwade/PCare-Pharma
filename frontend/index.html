@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="P.Care Pharma — Pharmacy Management System" />
+    <!-- Matches --color-surface-base (#EFF4F1 light / #0F1714 dark). Kept in sync with tokens.css:
+         the browser chrome cannot read a CSS variable. -->
+    <meta name="theme-color" content="#EFF4F1" />
+    <title>P.Care Pharma</title>
+    <script>
+      (function() {
+        try {
+          var theme = localStorage.getItem('pcare.theme');
+          var isDark = theme === 'dark' || ((!theme || theme === 'system') && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+          if (theme === 'dark' || theme === 'light') {
+            document.documentElement.dataset.theme = theme;
+          }
+          var metaThemeColor = document.querySelector('meta[name="theme-color"]');
+          if (metaThemeColor) {
+            metaThemeColor.setAttribute('content', isDark ? '#0F1714' : '#EFF4F1');
+          }
+        } catch (e) {}
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

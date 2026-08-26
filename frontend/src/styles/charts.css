@@ -1,0 +1,44 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   CHART CHROME — recharts' generated elements, styled from tokens.
+
+   Recharts takes colour as JS props, and component code may not contain raw
+   values (or even the substring "rgb(") — so everything structural about a
+   chart's chrome lives here, where tokens are the vocabulary, and the ui/
+   chart components pass only "var(--chart-*)" strings for series colours.
+
+   CSS properties beat SVG presentation attributes in the cascade, which is
+   what lets these rules override recharts' hard-coded defaults (#ccc grid,
+   #666 ticks) without a single colour appearing in JSX.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Gridlines: solid hairline, one step off the surface, horizontal only
+   (vertical={false} is set in the component). NEVER dashed — recharts
+   examples ship strokeDasharray="3 3", which reads as "projection" when it
+   is just a grid; this kills it even if a prop slips through. */
+.recharts-cartesian-grid line {
+  stroke: var(--chart-grid);
+  stroke-dasharray: none;
+}
+
+/* The baseline / axis rule sits one step darker than the grid. */
+.recharts-cartesian-axis line {
+  stroke: var(--chart-axis);
+}
+
+/* Axis text wears text tokens, never a series colour, at the 14px floor —
+   tabular figures so tick columns align, per the "tabular only in columns"
+   rule (stat-tile values stay proportional). */
+.recharts-cartesian-axis-tick text,
+.recharts-label,
+.recharts-label-list text {
+  fill: var(--chart-ink-muted);
+  font-family: var(--font-family-primary);
+  font-size: var(--font-size-base);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Value labels riding marks (bar tips) read as data, not chrome. */
+.recharts-label-list text {
+  fill: rgb(var(--color-text-primary));
+  font-weight: var(--font-weight-bold);
+}

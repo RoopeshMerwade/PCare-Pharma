@@ -1,0 +1,441 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   DESIGN TOKENS — the single source of truth for colour, type, space, radius,
+   shadow and motion. Nothing outside this file may declare a raw colour value.
+
+   Source: "Pharmacy Admin Dashboard — UI Guidelines" (Shadcn UI foundation).
+   The spec states colour in lab()/oklab(); values below are those converted to
+   sRGB. Anything marked [EXT] is an addition to the scale — each one exists
+   because the spec as literally written fails its own Section 4 acceptance
+   criteria, and each carries the measured contrast ratio that justifies it.
+
+   Colours are stored as space-separated RGB channels so Tailwind's alpha
+   modifier works: rgb(var(--x) / <alpha-value>). §3.1's 40% disabled state and
+   §2.2's "reduced opacity" badges both depend on this.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+:root,
+[data-theme="light"] {
+  /* Tells the browser which theme its OWN chrome should use — native
+     scrollbars, date-picker popups, select dropdowns, autofill. Without it
+     they stay light-mode even when every token below is dark. */
+  color-scheme: light;
+
+  /* ── Colour · text ──────────────────────────────────────────────────────
+     text-primary  14.71:1 on white  ✓ A1
+     text-tertiary  7.48:1 on white  ✓ A1                                   */
+  --color-text-primary:   30 43 37;      /* #1E2B25  lab(16.09 -6.96 1.87)  */
+  --color-text-tertiary:  70 89 81;      /* #465951  lab(36.03 -9.33 2.39)  */
+
+  /* ── Colour · surfaces ──────────────────────────────────────────────────
+     RULING: the spec gives surface.base as #000000, which scores 1.43:1
+     against text.primary and is inconsistent with every other value in the
+     set. Treated as an extraction artifact; the canvas is light.
+
+     RULING: on a light canvas, elevation is carried by shadow.2 (§2.4), not
+     by a lighter fill — so modals/popovers use surface-muted + shadow.2 and
+     surface-raised keeps the roles the spec actually gives it in §3.5
+     (disabled input fill) and §3.7 (selected row).                          */
+  --color-surface-base:   239 244 241;   /* #EFF4F1  [EXT] canvas           */
+  --color-surface-muted:  255 255 255;   /* #FFFFFF  cards, panels, modals  */
+  --color-surface-raised: 249 250 249;   /* #F9FAF9  disabled fill, selected*/
+  --color-surface-strong:   0 211 147;   /* #00D393  primary action, accent */
+
+  /* §3.1 requires hover to shift "one step toward surface.strong" and active
+     "one step darker than hover". On a fill that IS surface.strong that means
+     stepping down the same hue. Declared as tokens rather than reached for
+     with an opacity modifier — compositing mint over a light canvas makes it
+     paler, not darker, which is the opposite of the specified behaviour. */
+  --color-surface-strong-hover:   0 190 132;  /* #00BE84 */
+  --color-surface-strong-active:  0 168 117;  /* #00A875 */
+
+  /* ── Colour · borders ───────────────────────────────────────────────────
+     RULING: WCAG 1.4.11 asks 3:1 of *controls*, not of decorative dividers.
+     The spec's two border tokens (1.24:1 and 1.69:1 on white) are therefore
+     correct for rules and card edges, and wrong only where §3.5 points input
+     outlines at them. border-control [EXT] covers the control case.         */
+  --color-border-default: 225 233 229;   /* #E1E9E5  dividers, card edges   */
+  --color-border-muted:   198 209 203;   /* #C6D1CB  low-emphasis rules     */
+  --color-border-control: 126 147 139;   /* #7E938B  [EXT] 3.12:1 ✓ A2      */
+
+  /* ── Colour · focus ─────────────────────────────────────────────────────
+     RULING: the spec's ring (#00D492) scores 1.01:1 against surface-strong —
+     invisible on the very button §3.1 requires it to be visible on. This
+     value is the same mint hue driven dark: 7.75:1 on canvas, 3.96:1 on the
+     mint button. One ring, every surface, no exceptions list. ✓ A3          */
+  --color-focus-ring:       0 95 64;     /* #005F40  [EXT]                  */
+
+  /* ── Colour · accent at text weight ─────────────────────────────────────
+     surface-strong is a light fill and can never carry text weight on a
+     light ground (1.96:1). Links, icon strokes and small marks use this.
+     5.90:1 on white ✓ A1                                                    */
+  --color-accent-deep:      0 115 76;    /* #00734C  [EXT]                  */
+
+  /* ── Colour · status ────────────────────────────────────────────────────
+     RULING: the spec aliases status.critical, outOfStock AND the destructive
+     button all to surface.strong — so "Out of Stock" would render green and
+     "Delete Medicine" would be indistinguishable from "Complete Sale". Two
+     ramps are added. This is the one place the "aliases only" rule of §2.2 is
+     deliberately broken, and it is broken because §3.1 requires destructive
+     to be distinguishable and §5 requires status to be truthful.
+
+     status-ok inherits the treatment §2.2 assigned to lowStock (surface
+     -strong at reduced opacity) now that low stock is amber — a mint wash
+     for healthy stock is also the reading a pharmacist expects.             */
+  --color-status-ok:        0 86 58;     /* #00563A  ink on ok-wash 7.7:1 ✓ */
+  --color-status-ok-wash: 223 247 238;   /* #DFF7EE  mint @ ~12%            */
+
+  --color-status-low:     138 90 0;      /* #8A5A00  [EXT] 5.93:1 ✓         */
+  --color-status-low-ink: 107 68 0;      /* #6B4400  on low-wash 7.76:1 ✓   */
+  --color-status-low-wash:253 243 220;   /* #FDF3DC                         */
+
+  --color-status-critical:     179 38 30;/* #B3261E  [EXT] 6.54:1 ✓         */
+  --color-status-critical-hover:  155 33 26; /* #9B211A */
+  --color-status-critical-active: 133 28 22; /* #851C16 */
+  --color-status-critical-ink: 140 29 24;/* #8C1D18  on crit-wash 7.90:1 ✓  */
+  --color-status-critical-wash:252 235 234;/* #FCEBEA                       */
+
+  /* ── Primary and Destructive Foreground Tokens ─────────────────────────
+     RULING: primary button uses dark text (#1E2B25) on mint (7.52:1). White would be 1.96:1.
+     Destructive button uses white text (#FFFFFF) on red (#B3261E = 4.63:1). */
+  --color-primary-foreground:     30 43 37;   /* #1E2B25  dark label on mint 7.52:1 ✓ */
+  --color-destructive-foreground: 255 255 255;/* #FFFFFF  white label on red 4.63:1 ✓ */
+
+  /* ── Solid Badge Foreground ─────────────────────────────────────────────
+     Every --color-badge-*-bg documents its contrast ratio against white; this
+     is that white. Kept separate from --color-destructive-foreground, which
+     means "label on the destructive button" and must stay free to diverge. */
+  --color-badge-foreground: 255 255 255;
+
+  /* ── Solid Status Badge Tokens (White Text, High Contrast Solid Grounds) ─ */
+  --color-badge-success-bg:      16 128 67;   /* #108043 5.61:1 with white */
+  --color-badge-success-border:  16 185 129;  /* #10B981 */
+  --color-badge-processing-bg:   30 64 175;   /* #1E40AF 7.02:1 with white */
+  --color-badge-processing-border: 59 130 246;/* #3B82F6 */
+  --color-badge-critical-bg:    185 28 28;    /* #B91C1C 5.84:1 with white */
+  --color-badge-critical-border: 239 68 68;   /* #EF4444 */
+  --color-badge-warning-bg:     194 65 12;    /* #C2410C 4.88:1 with white */
+  --color-badge-warning-border: 245 158 11;   /* #F59E0B */
+  --color-badge-info-bg:         14 116 144;  /* #0E7490 5.12:1 with white */
+  --color-badge-info-border:      6 182 212;  /* #06B6D4 */
+  --color-badge-neutral-bg:      71 85 105;   /* #475569 4.96:1 with white */
+  --color-badge-neutral-border: 100 116 139;  /* #64748B */
+  --color-badge-flag-bg:         15 118 110;  /* #0F766E 5.25:1 with white */
+  --color-badge-flag-border:     20 184 166;  /* #14B8A6 */
+
+  /* ── Colour · charts [EXT] ──────────────────────────────────────────────
+     Series palette for data visualisation. The badge hues above cannot serve
+     here — they sit in a 0.018 relative-luminance band and are documented as
+     grayscale-indistinguishable, which disqualifies them as a categorical
+     series scale. These eight are a separate, validated set.
+
+     The SLOT ORDER is the colour-vision-deficiency safety mechanism, not a
+     cosmetic choice — never reorder, never generate a 9th hue. Validated
+     with the dataviz six-checks script against the actual card surfaces
+     (#FFFFFF light, #1A2621 dark):
+       adjacent pairs (stacks/bars/lines): ALL PASS both modes —
+         worst CVD ΔE 9.1 light / 8.4 dark (target ≥8),
+         worst normal-vision ΔE 19.6 light / 19.3 dark (floor ≥15)
+       contrast vs light card: slots 3 (2.82:1), 4 (2.17:1), 5 (2.69:1) sit
+         below 3:1 — a WARN whose obligatory relief is the "Show data table"
+         view every ChartCard carries. Dark mode: all eight clear 3:1.
+
+     Colour follows the ENTITY, never its rank: cash=1, upi=2, credit=3,
+     card=4, everywhere (domain/charts/series.js is the one map). Single-
+     series charts (revenue) use accent-deep, not a slot.                    */
+  --color-chart-1: 42 120 214;    /* #2A78D6  blue    — cash    */
+  --color-chart-2: 235 104 52;    /* #EB6834  orange  — upi     */
+  --color-chart-3: 27 175 122;    /* #1BAF7A  aqua    — credit  */
+  --color-chart-4: 237 161 0;     /* #EDA100  yellow  — card    */
+  --color-chart-5: 232 123 164;   /* #E87BA4  magenta */
+  --color-chart-6: 0 131 0;       /* #008300  green   */
+  --color-chart-7: 74 58 167;     /* #4A3AA7  violet  */
+  --color-chart-8: 227 73 72;     /* #E34948  red     */
+
+  /* Chart chrome — aliases of existing tokens, not new values (§2.2). */
+  --color-chart-grid: var(--color-border-default);
+  --color-chart-axis: var(--color-border-muted);
+
+  /* Resolved layer, declared ONCE (both theme attributes land on <html>, the
+     same element :root matches, and custom properties substitute lazily — so
+     these re-resolve automatically when the channel tokens above flip for
+     dark mode; the dark blocks only redeclare channels). Recharts takes
+     colours as JS props, where lint bans raw values and even the substring
+     "rgb(" — components pass "var(--chart-N)" strings and the colour is only
+     ever resolved here, by CSS, at paint time.                              */
+  --chart-1: rgb(var(--color-chart-1));
+  --chart-2: rgb(var(--color-chart-2));
+  --chart-3: rgb(var(--color-chart-3));
+  --chart-4: rgb(var(--color-chart-4));
+  --chart-5: rgb(var(--color-chart-5));
+  --chart-6: rgb(var(--color-chart-6));
+  --chart-7: rgb(var(--color-chart-7));
+  --chart-8: rgb(var(--color-chart-8));
+  --chart-grid: rgb(var(--color-chart-grid));
+  --chart-axis: rgb(var(--color-chart-axis));
+  --chart-surface: rgb(var(--color-surface-muted));     /* 2px gap + marker ring */
+  --chart-ink-muted: rgb(var(--color-text-tertiary));   /* axis/tick text        */
+  --chart-accent: rgb(var(--color-accent-deep));        /* single-series colour  */
+  --chart-cursor-fill: rgb(var(--color-border-default) / 0.4);  /* bar hover wash */
+
+  /* ── Typography ─────────────────────────────────────────────────────────
+     §2.1. font.size.xs and font.size.base are both 14px in the spec; stored
+     once, aliased in the Tailwind config rather than duplicated.
+
+     Only lineHeight.base (20px) is specified. The rest are derived on the
+     same ratio and recorded here so they are never re-invented per component. */
+  --font-family-primary: 'PT Sans', 'PT Sans Fallback', ui-sans-serif, system-ui, sans-serif;
+  --font-family-mono: ui-monospace, 'Cascadia Code', 'SF Mono', Consolas, monospace;
+
+  --font-size-base: 0.875rem;   /* 14px — floor for all data-dense surfaces */
+  --font-size-sm:   1rem;       /* 16px — currency & stock figures in tables */
+  --font-size-md:   1.125rem;   /* 18px */
+  --font-size-lg:   1.5rem;     /* 24px */
+
+  --line-height-base: 1.25rem;  /* 20px — specified */
+  --line-height-sm:   1.5rem;   /* 24px — derived */
+  --line-height-md:   1.625rem; /* 26px — derived */
+  --line-height-lg:   2rem;     /* 32px — derived */
+
+  --font-weight-base: 400;
+  --font-weight-bold: 700;
+
+  /* ── Spacing ────────────────────────────────────────────────────────────
+     §2.3. space-7 is kept at its specified 101.77px rather than rounded,
+     because §6 forbids substituting one-off values. It is permitted only on
+     page-level containers and this is enforced by lint.                     */
+  --space-1: 0.25rem;      /*   4px */
+  --space-2: 0.5rem;       /*   8px */
+  --space-3: 0.75rem;      /*  12px */
+  --space-4: 1rem;         /*  16px */
+  --space-5: 1.5rem;       /*  24px */
+  --space-6: 2.5rem;       /*  40px */
+  --space-7: 6.360625rem;  /* 101.77px — PAGE LEVEL ONLY */
+
+  /* ── Radius ─────────────────────────────────────────────────────────────
+     §2.4 forbids the 22–28px radii on inputs and table rows; §3.5 then
+     assigns radius.xs to inputs. Resolved with a control step: buttons and
+     badges keep the 22px pill, cards and modals keep 28px, and every control
+     that sits in a dense grid gets 8px.                                     */
+  --radius-control: 0.5rem;    /*  8px [EXT] inputs, selects, table cells */
+  --radius-xs:      1.375rem;  /* 22px      buttons, badges */
+  --radius-sm:      1.75rem;   /* 28px      cards, modals */
+
+  /* ── Elevation ──────────────────────────────────────────────────────────
+     §2.4. shadow-1 rests; shadow-2 is anything above the base plane.        */
+  --shadow-1: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --shadow-2: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+
+  /* ── Motion ─────────────────────────────────────────────────────────────
+     §2.4. Every state transition uses this unless a component says otherwise. */
+  --duration-instant: 150ms;
+
+  /* ── Layout ─────────────────────────────────────────────────────────────
+     Not a spec token, but a shared constant beats three components each
+     hard-coding a hit-area minimum. §3.1/A6: 44×44px.                       */
+  --target-min: 2.75rem;   /* 44px */
+
+  /* Clearance for the mobile bottom bar, so page content can always be
+     scrolled clear of it. A shared constant rather than a per-page guess —
+     the bar's height and this value have to move together. */
+  --bottom-bar-clearance: 6rem;  /* 96px */
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   DARK THEME REDECLARATIONS — [data-theme="dark"] & prefers-color-scheme
+
+   Every colour token redeclared with measured WCAG AA/AAA contrast ratios.
+   Non-colour tokens (space, radius, type, motion, target) remain identical.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  /* ── Colour · text ──────────────────────────────────────────────────────
+     text-primary:   16.25:1 on dark canvas (#0F1714), 13.84:1 on card (#1A2621) ✓ AAA
+     text-tertiary:  7.82:1 on dark canvas, 6.66:1 on card ✓ AA               */
+  --color-text-primary:   235 245 240;   /* #EBF5F0  [EXT] light primary text */
+  --color-text-tertiary:  152 176 166;   /* #98B0A6  [EXT] muted foreground   */
+
+  /* ── Colour · surfaces (ELEVATION INVERSION) ────────────────────────────
+     RULING [EXT]: In dark mode, elevation inverts from light mode. On dark
+     canvas, a 10% black box-shadow is near-invisible, so elevation is carried
+     by LIGHTER FILLS: surface-base (#0F1714) is the darkest canvas,
+     surface-muted (#1A2621 cards/panels/modals/popovers) steps lighter, and
+     surface-raised (#24332D selected/disabled) steps lighter still.        */
+  --color-surface-base:    15 23 20;     /* #0F1714  [EXT] dark canvas        */
+  --color-surface-muted:   26 38 33;     /* #1A2621  [EXT] cards, panels, modals */
+  --color-surface-raised:  36 51 45;     /* #24332D  [EXT] disabled fill, selected */
+  --color-surface-strong:   0 211 147;   /* #00D393  primary action mint      */
+
+  --color-surface-strong-hover:   0 230 160;  /* #00E6A0 */
+  --color-surface-strong-active:  0 190 132;  /* #00BE84 */
+
+  /* ── Primary Button Label RULING [EXT] ─────────────────────────────────
+     RULING [EXT]: primary buttons MUST NOT flip to white text.
+     Primary fill (#00D393 mint, L=0.551) is a light accent fill. White text
+     on mint yields 1.96:1 (severe WCAG failure). Dark label (--color-primary-foreground
+     #0F1714) on mint yields 7.75:1 (✓ AAA). Mint stays mint; labels stay dark. */
+  --color-primary-foreground: 15 23 20;  /* #0F1714  7.75:1 on mint ✓ AAA     */
+  --color-destructive-foreground: 255 255 255; /* #FFFFFF 4.56:1 on red ✓ AA */
+
+  /* ── Colour · borders ───────────────────────────────────────────────────
+     border-default: card edges and structural dividers in dark canvas
+     border-control: inputs and controls 3.41:1 on card (#1A2621) ✓ A2 (1.4.11) */
+  --color-border-default:  38 56 48;     /* #263830  card edges, rules        */
+  --color-border-muted:    48 69 60;     /* #30453C  low-emphasis dividers    */
+  --color-border-control:  88 122 108;   /* #587A6C  [EXT] 3.41:1 ✓ A2        */
+
+  /* ── Colour · focus (FOCUS RING RULING) ─────────────────────────────────
+     RULING [EXT]: In dark mode, --color-focus-ring (#007850, L=0.1395) is
+     mathematically tuned to clear 3:1 on BOTH the dark canvas (#0F1714)
+     at 3.27:1 AND the mint primary button (#00D393, L=0.551) at 3.17:1.
+     Both clear WCAG 1.4.11 Non-text Contrast (>= 3:1). ✓ A3                 */
+  --color-focus-ring:       0 120 80;    /* #007850  3.27:1 canvas / 3.17:1 mint ✓ */
+
+  /* ── Colour · accent at text weight ─────────────────────────────────────
+     Bright mint for links and icon strokes on dark grounds.
+     9.39:1 on canvas (#0F1714), 8.00:1 on card (#1A2621) ✓ AAA             */
+  --color-accent-deep:     52 211 153;   /* #34D399  [EXT]                    */
+
+  /* ── Colour · status (STATUS WASH RULING) ──────────────────────────────
+     RULING [EXT]: Dark-mode badge tones use desaturated dark wash backgrounds
+     with high-luminance ink text, guaranteeing >= 4.5:1 text contrast while
+     remaining clearly distinguishable between ok (mint), low (amber), and
+     critical (red).
+
+     status-ok: 7.66:1 on ok-wash (#0C2C20) ✓ AAA
+     status-low: 8.68:1 on low-wash (#362406) ✓ AAA
+     status-critical: 5.55:1 on crit-wash (#361212) ✓ AA                    */
+  --color-status-ok:        52 211 153;  /* #34D399  ink on ok-wash 7.66:1 ✓ */
+  --color-status-ok-wash:   12 44 32;    /* #0C2C20  deep mint wash          */
+
+  --color-status-low:      245 158 11;   /* #F59E0B  amber accent            */
+  --color-status-low-ink:  251 191 36;   /* #FBBF24  on low-wash 8.68:1 ✓    */
+  --color-status-low-wash:  54 36 6;     /* #362406  deep amber wash         */
+
+  --color-status-critical:     239 68 68;/* #EF4444  destructive button fill */
+  --color-status-critical-hover:  220 38 38; /* #DC2626 */
+  --color-status-critical-active: 185 28 28; /* #B91C1C */
+  --color-status-critical-ink: 248 113 113;/* #F87171 on crit-wash 5.55:1 ✓ */
+  --color-status-critical-wash: 54 18 18;/* #361212  deep crimson wash       */
+
+  /* ── Solid Badge Foreground ─────────────────────────────────────────────
+     Identical to light, like the badge grounds it sits on. Deliberately NOT
+     an alias of --color-destructive-foreground — same value, different job. */
+  --color-badge-foreground: 255 255 255;
+
+  /* ── Solid Status Badge Tokens (Dark Mode) ───────────────────────────── */
+  --color-badge-success-bg:      16 128 67;   /* #108043 */
+  --color-badge-success-border:  16 185 129;  /* #10B981 */
+  --color-badge-processing-bg:   30 64 175;   /* #1E40AF */
+  --color-badge-processing-border: 59 130 246;/* #3B82F6 */
+  --color-badge-critical-bg:    185 28 28;    /* #B91C1C */
+  --color-badge-critical-border: 239 68 68;   /* #EF4444 */
+  --color-badge-warning-bg:     194 65 12;    /* #C2410C */
+  --color-badge-warning-border: 245 158 11;   /* #F59E0B */
+  --color-badge-info-bg:         14 116 144;  /* #0E7490 */
+  --color-badge-info-border:      6 182 212;  /* #06B6D4 */
+  --color-badge-neutral-bg:      71 85 105;   /* #475569 */
+  --color-badge-neutral-border: 100 116 139;  /* #64748B */
+  --color-badge-flag-bg:         15 118 110;  /* #0F766E */
+  --color-badge-flag-border:     20 184 166;  /* #14B8A6 */
+
+  /* ── Colour · charts [EXT] ──────────────────────────────────────────────
+     Same eight hues stepped for the dark card (#1A2621), validated as a set
+     — see the light block for the measured results. Not an automatic flip.
+     Only the channels change; the resolved --chart-* layer in :root
+     re-substitutes these automatically.                                    */
+  --color-chart-1: 57 135 229;    /* #3987E5 */
+  --color-chart-2: 217 89 38;     /* #D95926 */
+  --color-chart-3: 25 158 112;    /* #199E70 */
+  --color-chart-4: 201 133 0;     /* #C98500 */
+  --color-chart-5: 213 81 129;    /* #D55181 */
+  --color-chart-6: 0 131 0;       /* #008300 */
+  --color-chart-7: 144 133 233;   /* #9085E9 */
+  --color-chart-8: 230 103 103;   /* #E66767 */
+
+  /* ── Elevation in dark mode ─────────────────────────────────────────── */
+  --shadow-1: 0 1px 2px 0 rgb(0 0 0 / 0.35);
+  --shadow-2: 0 4px 12px 0 rgb(0 0 0 / 0.45), 0 1px 3px 0 rgb(0 0 0 / 0.35);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+
+    --color-text-primary:   235 245 240;
+    --color-text-tertiary:  152 176 166;
+
+    --color-surface-base:    15 23 20;
+    --color-surface-muted:   26 38 33;
+    --color-surface-raised:  36 51 45;
+    --color-surface-strong:   0 211 147;
+    --color-surface-strong-hover:   0 230 160;
+    --color-surface-strong-active:  0 190 132;
+
+    --color-primary-foreground: 15 23 20;
+    --color-destructive-foreground: 255 255 255;
+
+    --color-border-default:  38 56 48;
+    --color-border-muted:    48 69 60;
+    --color-border-control:  88 122 108;
+
+    --color-focus-ring:       0 120 80;
+    --color-accent-deep:     52 211 153;
+
+    --color-status-ok:        52 211 153;
+    --color-status-ok-wash:   12 44 32;
+
+    --color-status-low:      245 158 11;
+    --color-status-low-ink:  251 191 36;
+    --color-status-low-wash:  54 36 6;
+
+    --color-status-critical:     239 68 68;
+    --color-status-critical-hover:  220 38 38;
+    --color-status-critical-active: 185 28 28;
+    --color-status-critical-ink: 248 113 113;
+    --color-status-critical-wash: 54 18 18;
+
+    --color-badge-foreground: 255 255 255;
+
+    --color-badge-success-bg:      16 128 67;
+    --color-badge-success-border:  16 185 129;
+    --color-badge-processing-bg:   30 64 175;
+    --color-badge-processing-border: 59 130 246;
+    --color-badge-critical-bg:    185 28 28;
+    --color-badge-critical-border: 239 68 68;
+    --color-badge-warning-bg:     194 65 12;
+    --color-badge-warning-border: 245 158 11;
+    --color-badge-info-bg:         14 116 144;
+    --color-badge-info-border:      6 182 212;
+    --color-badge-neutral-bg:      71 85 105;
+    --color-badge-neutral-border: 100 116 139;
+    --color-badge-flag-bg:         15 118 110;
+    --color-badge-flag-border:     20 184 166;
+
+    --color-chart-1: 57 135 229;
+    --color-chart-2: 217 89 38;
+    --color-chart-3: 25 158 112;
+    --color-chart-4: 201 133 0;
+    --color-chart-5: 213 81 129;
+    --color-chart-6: 0 131 0;
+    --color-chart-7: 144 133 233;
+    --color-chart-8: 230 103 103;
+
+    --shadow-1: 0 1px 2px 0 rgb(0 0 0 / 0.35);
+    --shadow-2: 0 4px 12px 0 rgb(0 0 0 / 0.45), 0 1px 3px 0 rgb(0 0 0 / 0.35);
+  }
+}
+
+/* A8 is a MUST, not a SHOULD — staff on low-end store hardware are in the
+   target audience. Applied once, app-wide, rather than per component. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

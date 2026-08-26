@@ -1,0 +1,112 @@
+@import './tokens.css';
+@import './charts.css';
+
+/* PT Sans is font.family.primary (§2.1). Served from the bundle, not a CDN —
+   the store's connection is not something the counter should depend on to get
+   readable type, and a silent fallback changes every measurement in §2.1. */
+@font-face {
+  font-family: 'PT Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./fonts/pt-sans-400.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'PT Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('./fonts/pt-sans-700.woff2') format('woff2');
+}
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    /* 14px base (§2.1) is set on body, not html, so rem-based spacing tokens
+       stay anchored to the browser's 16px root and the user's own font-size
+       preference keeps working. */
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: rgb(var(--color-surface-base));
+    color: rgb(var(--color-text-primary));
+    font-family: var(--font-family-primary);
+    font-size: var(--font-size-base);
+    line-height: var(--line-height-base);
+    font-weight: var(--font-weight-base);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* A3: every interactive element shows a visible ring, on every surface it
+     can appear on — including primary buttons on surface-strong. Set once here
+     so no component can ship without one; components may restyle the offset
+     but must not remove the ring. */
+  :where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+    outline: 2px solid rgb(var(--color-focus-ring));
+    outline-offset: 2px;
+    border-radius: var(--radius-control);
+  }
+
+  /* Numbers that sit in columns must align. §3.7 right-aligns numeric columns;
+     tabular figures are what makes that legible. */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Modern, theme-following scrollbars on every scroller — the page, the
+     review panel, dropdowns, dialogs. Only the standard properties are used:
+     once scrollbar-width/scrollbar-color are set, Chromium ignores
+     ::-webkit-scrollbar styling entirely, so mixing both forks the look
+     between engines. The thumb rides the border token (adapts to light/dark
+     with the rest of the theme); the track is transparent so a scroller never
+     draws a bright rail across a card. Native inner scrollbars this CSS can't
+     reach (the PDF viewer's) follow color-scheme from tokens.css instead. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(var(--color-border-control) / 0.6) transparent;
+  }
+}
+
+@layer components {
+  /* Sidebar nav scroll — slightly quieter thumb than the app-wide scrollbar
+     rule in @layer base, so the rail reads as furniture, not content. */
+  .sidebar-scroll {
+    scrollbar-color: rgb(var(--color-border-control) / 0.4) transparent;
+  }
+
+  /* §3.6 — the first focusable element on every page. Visible only on focus,
+     but genuinely focusable, never display:none. */
+  .skip-link {
+    position: absolute;
+    left: var(--space-3);
+    top: var(--space-3);
+    z-index: 100;
+    transform: translateY(-200%);
+    transition: transform var(--duration-instant) ease-out;
+    background-color: rgb(var(--color-surface-muted));
+    color: rgb(var(--color-text-primary));
+    border: 1px solid rgb(var(--color-border-control));
+    border-radius: var(--radius-xs);
+    padding: var(--space-2) var(--space-4);
+    font-weight: var(--font-weight-bold);
+    box-shadow: var(--shadow-2);
+  }
+  .skip-link:focus {
+    transform: translateY(0);
+  }
+
+  /* Auth screens' canvas. A dot grid at blister-pack spacing plus a soft
+     centred lift behind the card — texture drawn from the subject (pharmacy
+     packaging) rather than a generic gradient blob, and cheap enough for the
+     store's own hardware since it's two CSS gradients, not an image. */
+  .auth-canvas {
+    background-image:
+      radial-gradient(circle at 50% 32%, rgb(var(--color-surface-strong) / 0.10), transparent 60%),
+      radial-gradient(rgb(var(--color-surface-strong) / 0.18) 1px, transparent 1.6px);
+    background-size: auto, 24px 24px;
+  }
+}
