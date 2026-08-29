@@ -11,7 +11,7 @@ import Field from '../../ui/Field';
 import Input, { NumericInput, Textarea } from '../../ui/Input';
 import Select from '../../ui/Select';
 import { Dialog, DialogContent, DialogHeader, DialogBody, DialogFooter, DialogClose } from '../../ui/Dialog';
-import { SkeletonRows } from '../../ui/Skeleton';
+import { SkeletonDetail, SkeletonRegion, SkeletonRows } from '../../ui/Skeleton';
 import { useToast } from '../../ui/Toast';
 import { PlusIcon } from '../../ui/icons';
 import { Money } from '../../domain/Money';
@@ -166,7 +166,14 @@ function ReturnDetailDialog({ returnId, isOwner, onClose, onResolved, onError })
         {!detail ? (
           <>
             <DialogHeader title="Loading return…" />
-            <DialogBody><SkeletonRows count={4} /></DialogBody>
+            <DialogBody>
+              {/* Reason and refund mode sit over the returned lines, which is
+                  the order the detail arrives in. */}
+              <SkeletonRegion label="Loading this return…">
+                <SkeletonDetail rows={2} className="border-b border-border pb-s3" />
+                <SkeletonRows count={2} className="py-s3" />
+              </SkeletonRegion>
+            </DialogBody>
           </>
         ) : (
           <>

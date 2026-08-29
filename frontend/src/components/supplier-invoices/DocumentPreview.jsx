@@ -2,7 +2,7 @@
 import { api } from '../../lib/api';
 import Button from '../../ui/Button';
 import ErrorState from '../../ui/ErrorState';
-import Skeleton from '../../ui/Skeleton';
+import Skeleton, { SkeletonRegion } from '../../ui/Skeleton';
 
 /* ═══════════════════════════════════════════════════════════════════════════
    DocumentPreview — the left half of the review screen.
@@ -78,7 +78,11 @@ export default function DocumentPreview({ invoiceId, fileName }) {
         />
       )}
 
-      {!doc && !error && <Skeleton className="h-72 w-full lg:h-[540px]" />}
+      {!doc && !error && (
+        <SkeletonRegion label="Loading the original document…">
+          <Skeleton className="h-72 w-full rounded-card lg:h-[540px]" />
+        </SkeletonRegion>
+      )}
 
       {doc?.url && !error && (
         <div className="overflow-hidden rounded-card border border-border bg-muted">

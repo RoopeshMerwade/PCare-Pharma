@@ -14,7 +14,7 @@ import Link from '../../ui/Link';
 import Badge from '../../ui/Badge';
 import Spinner from '../../ui/Spinner';
 import ErrorState from '../../ui/ErrorState';
-import { SkeletonRows } from '../../ui/Skeleton';
+import Skeleton, { SkeletonCard, SkeletonFields, SkeletonRegion } from '../../ui/Skeleton';
 import { useToast } from '../../ui/Toast';
 import { AlertIcon } from '../../ui/icons';
 import { Money } from '../../domain/Money';
@@ -144,7 +144,23 @@ export default function InvoiceReviewPage() {
     return (
       <div>
         <PageHeader title="Invoice review" subtitle="Loading the document and its lines…" />
-        <SkeletonRows count={4} />
+        {/* The split this screen is built around: the photographed invoice on
+            the left, the fields being checked against it on the right. Both
+            halves are reserved, because the reviewer's eye moves between them
+            and a column that appears late moves the other one. */}
+        <SkeletonRegion label="Loading the invoice…">
+          <Skeleton className="mb-s3 h-target w-full rounded-card" />
+          <div className="grid items-start gap-s4 lg:grid-cols-2 lg:gap-s5">
+            <Skeleton className="h-72 w-full rounded-card lg:h-[540px]" />
+            <div className="flex min-w-0 flex-col gap-s4">
+              <SkeletonCard>
+                <SkeletonFields count={3} />
+              </SkeletonCard>
+              <SkeletonCard lines={2} />
+              <SkeletonCard lines={2} />
+            </div>
+          </div>
+        </SkeletonRegion>
       </div>
     );
   }

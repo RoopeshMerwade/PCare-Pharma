@@ -3,7 +3,7 @@ import { api } from '../../lib/api';
 import { dateTime, plural, shortDate } from '../../lib/format';
 import {
   Button, Drawer, DrawerContent, DrawerHeader, DrawerBody, DrawerFooter,
-  ErrorState, Field, Spinner, Textarea,
+  ErrorState, Field, Skeleton, SkeletonRegion, SkeletonRows, Textarea,
 } from '../../ui';
 import { DownloadIcon } from '../../ui/icons';
 import { Money, Qty } from '../../domain/Money';
@@ -190,10 +190,22 @@ export default function RequisitionDrawer({ requisitionId, open, onOpenChange, o
           <DrawerBody>
             {error && <ErrorState message={error} />}
 
+            {/* Badges, then the vendor groups, then the estimated cost — the
+                drawer opens from a row that already named the request, so what
+                is missing is its shape, not a "loading" word. */}
             {!requisition && !error && (
-              <div className="flex items-center gap-s2 text-base text-muted-foreground">
-                <Spinner className="h-4 w-4" /> Loading…
-              </div>
+              <SkeletonRegion label="Loading this stock request…" className="flex flex-col gap-s4">
+                <div className="flex flex-wrap items-center gap-s2">
+                  <Skeleton className="h-5 w-24 rounded-pill" />
+                  <Skeleton className="h-5 w-20 rounded-pill" />
+                  <Skeleton className="h-4 w-16" />
+                </div>
+                <SkeletonRows count={3} />
+                <div className="flex items-baseline justify-between gap-s3 border-t border-border pt-s3">
+                  <Skeleton className="h-5 w-32" />
+                  <Skeleton className="h-5 w-24" />
+                </div>
+              </SkeletonRegion>
             )}
 
             {requisition && (

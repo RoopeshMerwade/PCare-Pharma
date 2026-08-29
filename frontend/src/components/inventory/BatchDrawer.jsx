@@ -11,7 +11,7 @@ import Input, { NumericInput, Textarea } from '../../ui/Input';
 import Select from '../../ui/Select';
 import EmptyState from '../../ui/EmptyState';
 import ErrorState from '../../ui/ErrorState';
-import { SkeletonRows } from '../../ui/Skeleton';
+import Skeleton, { SkeletonRegion } from '../../ui/Skeleton';
 import { Money, Qty } from '../../domain/Money';
 import { contentNoun, perUnitPrice } from '../../domain/pack';
 import { ExpiryBadge, StockBadge } from '../../domain/StatusBadge';
@@ -90,7 +90,31 @@ export default function BatchDrawer({ medicine, open, onOpenChange, onChanged })
             {error ? (
               <ErrorState title="Couldn't load batches" message={error.message} onRetry={fetchBatches} />
             ) : loading ? (
-              <SkeletonRows count={3} />
+              // A batch card is taller than a list row: identity and expiry on
+              // the left, the count and its badge on the right, prices along
+              // the foot. The list is scrolled and acted on immediately, so it
+              // is worth standing in at the right height.
+              <SkeletonRegion label="Loading batches…">
+                <ul className="flex flex-col gap-s3">
+                  {[0, 1, 2].map((n) => (
+                    <li key={n} className="rounded-card border border-border bg-card p-s3">
+                      <div className="flex items-start justify-between gap-s3">
+                        <div className="flex min-w-0 flex-col gap-s1">
+                          <Skeleton className="h-4 w-32" />
+                          <Skeleton className="h-4 w-40" />
+                        </div>
+                        <div className="flex shrink-0 flex-col items-end gap-s1">
+                          <Skeleton className="h-4 w-20" />
+                          <Skeleton className="h-5 w-24 rounded-pill" />
+                        </div>
+                      </div>
+                      <div className="mt-s3 border-t border-border pt-s2">
+                        <Skeleton className="h-4 w-48" />
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </SkeletonRegion>
             ) : batches.length === 0 ? (
               <EmptyState
                 title="No batches on record"

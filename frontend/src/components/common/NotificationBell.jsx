@@ -3,7 +3,7 @@ import * as Popover from '@radix-ui/react-popover';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { cn } from '../../lib/cn';
 import Button from '../../ui/Button';
-import Spinner from '../../ui/Spinner';
+import Skeleton, { SkeletonRegion } from '../../ui/Skeleton';
 import { useToast } from '../../ui/Toast';
 import { BellIcon, ClockIcon } from '../../ui/icons';
 import { destinationFor, notificationMeta } from '../../domain/notifications';
@@ -208,10 +208,21 @@ export default function NotificationBell({ notifications, isOwner }) {
           {/* List content */}
           <div className="max-h-[24rem] overflow-y-auto">
             {loading && recentNotifications.length === 0 ? (
-              <div className="flex items-center justify-center gap-2 px-4 py-8 text-sm text-muted-foreground">
-                <Spinner />
-                Loading notifications…
-              </div>
+              // Rows, not a spinner in an empty panel: the panel is a fixed
+              // 24rem scroller and the notifications drop straight into these
+              // positions, so nothing under the pointer moves when they land.
+              <SkeletonRegion label="Loading notifications…" className="flex flex-col gap-s2 p-s3">
+                {[0, 1, 2].map((n) => (
+                  <div key={n} className="flex items-start gap-s3">
+                    <Skeleton className="h-10 w-10 shrink-0 rounded-pill" />
+                    <div className="flex min-w-0 flex-1 flex-col gap-s1">
+                      <Skeleton className="h-4 w-2/3" />
+                      <Skeleton className="h-4 w-full" />
+                      <Skeleton className="h-4 w-20" />
+                    </div>
+                  </div>
+                ))}
+              </SkeletonRegion>
             ) : error ? (
               <div className="px-4 py-5 text-center">
                 <p className="text-sm font-bold text-foreground">Couldn&rsquo;t load notifications</p>

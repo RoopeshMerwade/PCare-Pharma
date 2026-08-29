@@ -15,7 +15,7 @@ import Link from '../../ui/Link';
 import Pagination from '../../ui/Pagination';
 import EmptyState from '../../ui/EmptyState';
 import ErrorState from '../../ui/ErrorState';
-import Skeleton, { SkeletonRows } from '../../ui/Skeleton';
+import Skeleton, { SkeletonRegion, SkeletonRows, SkeletonText } from '../../ui/Skeleton';
 import { useToast } from '../../ui/Toast';
 import { PlusIcon } from '../../ui/icons';
 import { Money } from '../../domain/Money';
@@ -98,9 +98,38 @@ export default function CustomerProfilePage() {
 
   if (loading) {
     return (
-      <div className="flex flex-col gap-s4">
-        <Skeleton className="h-32 rounded-card" />
-        <SkeletonRows count={4} />
+      <div>
+        <Skeleton className="mb-s4 h-5 w-40" />
+        <SkeletonRegion label="Loading this customer…">
+          {/* The identity card first — avatar, name over its detail grid, then
+              the three figures along its foot — followed by the two sections
+              of rows the profile always has. */}
+          <Card className="mb-s5">
+            <CardBody>
+              <div className="flex flex-wrap items-start gap-s3">
+                <Skeleton className="h-14 w-14 shrink-0 rounded-pill" />
+                <div className="flex min-w-0 flex-1 flex-col gap-s2">
+                  <Skeleton className="h-6 w-1/3" />
+                  <SkeletonText lines={2} />
+                </div>
+              </div>
+              <div className="mt-s4 grid grid-cols-3 gap-s3 border-t border-border pt-s3">
+                {[0, 1, 2].map((n) => (
+                  <div key={n} className="flex flex-col gap-s1">
+                    <Skeleton className="h-4 w-2/3" />
+                    <Skeleton className="h-4 w-1/2" />
+                  </div>
+                ))}
+              </div>
+            </CardBody>
+          </Card>
+
+          <Skeleton className="mb-s3 h-5 w-1/4" />
+          <SkeletonRows count={2} className="mb-s5" />
+
+          <Skeleton className="mb-s3 h-5 w-1/4" />
+          <SkeletonRows count={4} />
+        </SkeletonRegion>
       </div>
     );
   }

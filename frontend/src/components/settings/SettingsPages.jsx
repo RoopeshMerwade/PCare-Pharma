@@ -14,7 +14,7 @@ import Select from '../../ui/Select';
 import Pagination from '../../ui/Pagination';
 import EmptyState from '../../ui/EmptyState';
 import ErrorState from '../../ui/ErrorState';
-import { SkeletonRows } from '../../ui/Skeleton';
+import Skeleton, { SkeletonCard, SkeletonFields, SkeletonRegion, SkeletonRows } from '../../ui/Skeleton';
 import { useToast } from '../../ui/Toast';
 import { notificationMeta } from '../../domain/notifications';
 
@@ -83,7 +83,10 @@ export function NotificationsPage() {
       {error ? (
         <ErrorState title="Couldn't load notifications" message={error.message} onRetry={fetchNotifications} />
       ) : loading ? (
-        <SkeletonRows count={5} />
+        // `leading` for the type icon every notification row carries.
+        <SkeletonRegion label="Loading notifications…">
+          <SkeletonRows count={5} leading trailing={false} />
+        </SkeletonRegion>
       ) : notifications.length === 0 ? (
         <EmptyState
           title="Nothing needs your attention"
@@ -334,7 +337,19 @@ export function SettingsPage() {
         <AppearanceCard />
 
         {loading ? (
-          <SkeletonRows count={6} />
+          // One card per section, each holding the field count that section
+          // actually has — the form is a known shape even before its values
+          // arrive, so there is no excuse for it to land somewhere else.
+          <SkeletonRegion label="Loading your pharmacy details…" className="flex flex-col gap-s4">
+            {SECTIONS.map((section) => (
+              <SkeletonCard key={section.title}>
+                <SkeletonFields count={section.fields.length} className="sm:grid sm:grid-cols-2" />
+              </SkeletonCard>
+            ))}
+            <div className="flex justify-end">
+              <Skeleton className="h-target w-40 rounded-pill" />
+            </div>
+          </SkeletonRegion>
         ) : (
           <>
             {SECTIONS.map((section) => (
@@ -419,7 +434,9 @@ export function AuditLogsPage() {
       {resource.error ? (
         <ErrorState title="Couldn't load the audit log" message={resource.error.message} onRetry={resource.reload} />
       ) : resource.loading ? (
-        <SkeletonRows count={8} />
+        <SkeletonRegion label="Loading the audit log…">
+          <SkeletonRows count={8} className="gap-s1" />
+        </SkeletonRegion>
       ) : resource.rows.length === 0 ? (
         <EmptyState
           title={resource.isFiltered ? 'No entries match those filters' : 'No log entries yet'}

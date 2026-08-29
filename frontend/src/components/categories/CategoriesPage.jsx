@@ -9,7 +9,7 @@ import Button from '../../ui/Button';
 import Badge from '../../ui/Badge';
 import EmptyState from '../../ui/EmptyState';
 import ErrorState from '../../ui/ErrorState';
-import { SkeletonRows } from '../../ui/Skeleton';
+import { SkeletonRegion, SkeletonRows } from '../../ui/Skeleton';
 import { useToast } from '../../ui/Toast';
 import { PlusIcon } from '../../ui/icons';
 
@@ -121,7 +121,9 @@ export default function CategoriesPage() {
           onRetry={fetchCategories}
         />
       ) : loading ? (
-        <SkeletonRows count={6} />
+        <SkeletonRegion label="Loading categories…">
+          <SkeletonRows count={6} leading />
+        </SkeletonRegion>
       ) : active.length === 0 && inactive.length === 0 ? (
         <EmptyState
           title="No categories yet"

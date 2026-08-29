@@ -8,7 +8,7 @@ import Card, { CardBody } from '../../ui/Card';
 import Input from '../../ui/Input';
 import Field from '../../ui/Field';
 import { Dialog, DialogContent, DialogHeader, DialogBody } from '../../ui/Dialog';
-import { SkeletonRows } from '../../ui/Skeleton';
+import { SkeletonDetail, SkeletonRegion, SkeletonTile } from '../../ui/Skeleton';
 import { Money } from '../../domain/Money';
 import { PaymentBadge } from '../../domain/StatusBadge';
 
@@ -101,9 +101,12 @@ export default function BillsListPage() {
               <TotalCard label="Credit today" value={summary.credit} />
             </div>
           ) : (
-            <div className="mb-s4 grid grid-cols-2 gap-s3 lg:grid-cols-4">
-              <SkeletonRows count={1} />
-            </div>
+            // Four tiles, not one bar in the first cell of a four-column grid:
+            // the totals row is what the owner's eye goes to first, and it has
+            // to be the same shape before and after the figures land.
+            <SkeletonRegion label="Loading today’s totals…" className="mb-s4 grid grid-cols-2 gap-s3 lg:grid-cols-4">
+              {[0, 1, 2, 3].map((n) => <SkeletonTile key={n} trend={false} sub={false} />)}
+            </SkeletonRegion>
           )
         )}
 
@@ -156,6 +159,15 @@ function BillDetailDialog({ bill, open, onOpenChange }) {
             <Row label="Paid by" value={<PaymentBadge mode={b.payment_mode} variant="solid" />} />
           </dl>
 
+          {/* The row already carries the header and the totals, so the dialog
+              opens with those in place; only the lines are still in flight.
+              Standing them in keeps the totals below from jumping up the
+              dialog and back down as the items arrive. */}
+          {!detail ? (
+            <SkeletonRegion label="Loading the bill lines…" className="py-s3">
+              <SkeletonDetail rows={3} />
+            </SkeletonRegion>
+          ) : (
           <ul className="flex flex-col gap-s2 py-s3">
             {(b.items || []).map((item, idx) => (
               <li key={idx} className="flex items-start justify-between gap-s3">
@@ -169,6 +181,7 @@ function BillDetailDialog({ bill, open, onOpenChange }) {
               </li>
             ))}
           </ul>
+          )}
 
           <dl className="flex flex-col gap-s1 border-t border-border pt-s3">
             <Row label="Subtotal" value={<Money value={b.subtotal} />} />

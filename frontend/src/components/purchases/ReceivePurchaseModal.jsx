@@ -5,7 +5,7 @@ import FormDialog from '../../patterns/FormDialog';
 import Field from '../../ui/Field';
 import Input, { NumericInput } from '../../ui/Input';
 import ErrorState from '../../ui/ErrorState';
-import { SkeletonRows } from '../../ui/Skeleton';
+import Skeleton, { SkeletonFields, SkeletonRegion } from '../../ui/Skeleton';
 import { Money } from '../../domain/Money';
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -273,7 +273,19 @@ export default function ReceivePurchaseModal({ purchase, open, onOpenChange, onR
           : null
       }
     >
-      {loading && <SkeletonRows count={2} />}
+      {/* The invoice field, then a fieldset per ordered line — the shape is
+          known from the order before the lines themselves arrive. */}
+      {loading && (
+        <SkeletonRegion label="Loading the order lines…" className="flex flex-col gap-s4">
+          <SkeletonFields count={1} />
+          {[0, 1].map((n) => (
+            <div key={n} className="rounded-card border border-border p-s3">
+              <Skeleton className="mb-s3 h-4 w-1/3" />
+              <SkeletonFields count={3} className="sm:grid sm:grid-cols-2 lg:grid-cols-3" />
+            </div>
+          ))}
+        </SkeletonRegion>
+      )}
 
       {loadError && (
         <ErrorState

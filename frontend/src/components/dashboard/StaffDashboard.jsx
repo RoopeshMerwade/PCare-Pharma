@@ -8,7 +8,7 @@ import Card, { CardBody } from '../../ui/Card';
 import Button from '../../ui/Button';
 import Badge from '../../ui/Badge';
 import ErrorState from '../../ui/ErrorState';
-import Skeleton, { SkeletonRows } from '../../ui/Skeleton';
+import Skeleton, { SkeletonCard, SkeletonRegion, SkeletonRows, SkeletonTile } from '../../ui/Skeleton';
 import { Money, Qty } from '../../domain/Money';
 import { PlusIcon, AlertIcon, PillIcon, ClipboardIcon } from '../../ui/icons';
 import { RequisitionStatusBadge, RequisitionUrgencyBadge } from '../../domain/StatusBadge';
@@ -46,13 +46,24 @@ export function StaffDashboard() {
 
   if (loading) {
     return (
-      <div>
+      <div className="flex flex-col gap-s5">
         <PageHeader title="Today's counter" subtitle={longDate()} />
-        <div className="mb-s4 grid grid-cols-2 gap-s3">
-          <Skeleton className="h-24 rounded-card" />
-          <Skeleton className="h-24 rounded-card" />
-        </div>
-        <SkeletonRows count={3} />
+        {/* Same stack, same gaps as the loaded shift view below: the check-in
+            card, the two counters, the one primary action, then the bills. The
+            button in particular must not move — it is the thing being reached
+            for while this is on screen. */}
+        <SkeletonRegion label="Loading today’s counter…" className="flex flex-col gap-s5">
+          <SkeletonCard lines={2} />
+          <div className="grid grid-cols-2 gap-s3">
+            <SkeletonTile trend={false} sub={false} />
+            <SkeletonTile trend={false} sub={false} />
+          </div>
+          <Skeleton className="h-target w-full rounded-pill" />
+          <div className="flex flex-col gap-s2">
+            <Skeleton className="h-5 w-1/3" />
+            <SkeletonRows count={3} />
+          </div>
+        </SkeletonRegion>
       </div>
     );
   }

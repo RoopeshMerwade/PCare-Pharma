@@ -74,6 +74,7 @@ export default function ResourcePage({
             rows={rows}
             keyField={keyField}
             loading={loading}
+            itemNoun={itemNoun}
             onRowClick={onRowClick}
             rowActions={rowActions}
             isRowMuted={isRowMuted}

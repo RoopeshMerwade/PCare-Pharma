@@ -11,7 +11,7 @@ import Field from '../../ui/Field';
 import Input from '../../ui/Input';
 import EmptyState from '../../ui/EmptyState';
 import ErrorState from '../../ui/ErrorState';
-import { SkeletonRows } from '../../ui/Skeleton';
+import { SkeletonRegion, SkeletonRows } from '../../ui/Skeleton';
 import { useToast } from '../../ui/Toast';
 import { PlusIcon } from '../../ui/icons';
 
@@ -100,7 +100,9 @@ export default function UsersPage() {
       {error ? (
         <ErrorState title="Couldn't load staff accounts" message={error.message} onRetry={fetchUsers} />
       ) : loading ? (
-        <SkeletonRows count={3} />
+        <SkeletonRegion label="Loading staff accounts…">
+          <SkeletonRows count={3} leading />
+        </SkeletonRegion>
       ) : users.length === 0 ? (
         <EmptyState
           title="No staff accounts yet"

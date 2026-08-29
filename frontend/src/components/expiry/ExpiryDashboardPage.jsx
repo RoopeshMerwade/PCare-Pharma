@@ -8,7 +8,7 @@ import Button from '../../ui/Button';
 import Card, { CardBody } from '../../ui/Card';
 import EmptyState from '../../ui/EmptyState';
 import ErrorState from '../../ui/ErrorState';
-import { SkeletonRows } from '../../ui/Skeleton';
+import Skeleton, { SkeletonRegion, SkeletonRows, SkeletonTile } from '../../ui/Skeleton';
 import { useToast } from '../../ui/Toast';
 import { Money, Qty } from '../../domain/Money';
 
@@ -89,7 +89,17 @@ export default function ExpiryDashboardPage() {
       {error ? (
         <ErrorState title="Couldn't load expiry data" message={error.message} onRetry={fetchDashboard} />
       ) : loading ? (
-        <SkeletonRows count={5} />
+        // The four bucket tiles are the page's own tab strip — they must be
+        // in place before the batch list under them, or the list arrives and
+        // immediately slides down by a card's height.
+        <SkeletonRegion label="Loading expiring batches…">
+          <div className="mb-s4 grid grid-cols-2 gap-s3 lg:grid-cols-4">
+            {BUCKETS.map((b) => <SkeletonTile key={b.key} trend={false} sub={false} />)}
+          </div>
+          <Skeleton className="mb-s2 h-5 w-1/3" />
+          <Skeleton className="mb-s3 h-4 w-2/5" />
+          <SkeletonRows count={5} />
+        </SkeletonRegion>
       ) : (
         <>
           <div className="mb-s4 grid grid-cols-2 gap-s3 lg:grid-cols-4">

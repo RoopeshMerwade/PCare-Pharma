@@ -9,7 +9,10 @@ export { default as Button, buttonVariants } from './Button';
 export { default as Link } from './Link';
 export { default as Spinner } from './Spinner';
 export { default as Badge, badgeVariants } from './Badge';
-export { default as Skeleton, SkeletonRows } from './Skeleton';
+export {
+  default as Skeleton, SkeletonRegion, SkeletonText, SkeletonRows, SkeletonTable,
+  SkeletonTile, SkeletonCard, SkeletonChart, SkeletonFields, SkeletonDetail,
+} from './Skeleton';
 export { default as EmptyState } from './EmptyState';
 export { default as ErrorState } from './ErrorState';
 export { default as Pagination, pageWindow } from './Pagination';

@@ -1,5 +1,5 @@
 import { cn } from '../lib/cn';
-import Skeleton from './Skeleton';
+import { SkeletonRegion, SkeletonTable } from './Skeleton';
 import EmptyState from './EmptyState';
 import { ListField } from './List';
 
@@ -49,6 +49,7 @@ export default function Table({
   sort,
   onSortChange,
   loading = false,
+  itemNoun = 'rows',
   emptyTitle,
   emptyBody,
   emptyAction,
@@ -57,20 +58,13 @@ export default function Table({
   className,
 }) {
   if (loading) {
+    // Both breakpoints, from the same column config the loaded table uses —
+    // see SkeletonTable. The wait is announced once, here, because the bars
+    // themselves are aria-hidden (A10).
     return (
-      <div className="overflow-hidden rounded-card border border-border bg-card">
-        {/* Skeleton mirrors the real column structure so nothing reflows. */}
-        <div className="hidden border-b border-border bg-muted px-s3 py-s2 md:flex md:gap-s3">
-          {columns.map((col) => (
-            <Skeleton key={col.key} className="h-4 flex-1" />
-          ))}
-        </div>
-        <div className="flex flex-col gap-s2 p-s3">
-          {Array.from({ length: 6 }, (_, i) => (
-            <Skeleton key={i} className="h-target w-full" />
-          ))}
-        </div>
-      </div>
+      <SkeletonRegion label={`Loading ${itemNoun}…`}>
+        <SkeletonTable columns={columns.length} actions={Boolean(rowActions)} />
+      </SkeletonRegion>
     );
   }
 

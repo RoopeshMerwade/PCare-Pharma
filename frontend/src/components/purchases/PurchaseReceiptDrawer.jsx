@@ -4,7 +4,7 @@ import { date, daysUntil, money, qty as formatQty } from '../../lib/format';
 import { Drawer, DrawerContent, DrawerHeader, DrawerBody } from '../../ui/Drawer';
 import ErrorState from '../../ui/ErrorState';
 import EmptyState from '../../ui/EmptyState';
-import { SkeletonRows } from '../../ui/Skeleton';
+import { SkeletonRegion, SkeletonRows } from '../../ui/Skeleton';
 import { Money } from '../../domain/Money';
 import { ExpiryBadge } from '../../domain/StatusBadge';
 
@@ -110,7 +110,11 @@ export default function PurchaseReceiptDrawer({ purchase, open, onOpenChange }) 
         />
 
         <DrawerBody>
-          {loading && <SkeletonRows count={3} />}
+          {loading && (
+            <SkeletonRegion label="Loading the receipt lines…">
+              <SkeletonRows count={3} />
+            </SkeletonRegion>
+          )}
 
           {error && <ErrorState title="Couldn't load the receipt" message={error.message} />}
 

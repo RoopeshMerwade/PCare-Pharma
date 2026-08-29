@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../lib/api';
+import { cn } from '../../lib/cn';
 import { count, date, plural, shortDate } from '../../lib/format';
 import PageHeader from '../../patterns/PageHeader';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../ui/Tabs';
@@ -8,7 +9,9 @@ import Input from '../../ui/Input';
 import Select from '../../ui/Select';
 import Table from '../../ui/Table';
 import ErrorState from '../../ui/ErrorState';
-import { SkeletonRows } from '../../ui/Skeleton';
+import Skeleton, {
+  SkeletonRegion, SkeletonTile, SkeletonChart, SkeletonTable,
+} from '../../ui/Skeleton';
 import { Money, Qty } from '../../domain/Money';
 import { StockBadge, PurchaseStatusBadge } from '../../domain/StatusBadge';
 import {
@@ -111,7 +114,7 @@ export default function ReportsPage() {
           {error ? (
             <ErrorState title="Couldn't load this report" message={error.message} onRetry={fetchReport} />
           ) : loading && !data ? (
-            <SkeletonRows count={6} />
+            <ReportSkeleton tab={tab} />
           ) : !data ? null : (
             <>
               {tab === 'sales' && <SalesReport data={data} dimmed={refreshing} />}
@@ -128,6 +131,47 @@ export default function ReportsPage() {
 
 function StatGrid({ children }) {
   return <div className="mb-s4 grid grid-cols-2 gap-s3 lg:grid-cols-3">{children}</div>;
+}
+
+/* Each tab resolves into a different shape — six tiles and two charts on
+   Sales, three tiles and one chart on Margins, a four-across grid on
+   Inventory — so one generic placeholder would be wrong on three tabs out of
+   four. The counts below are read straight off the reports underneath; a tab
+   change drops `data` and lands here, so this is what the eye holds while the
+   next report arrives.
+
+   Only the tiles and chart carry a reserved height. The table is the same
+   SkeletonTable the loaded Table renders, at both breakpoints. */
+const REPORT_SHAPES = {
+  sales:     { tiles: 6, tileGrid: 'grid-cols-2 lg:grid-cols-3', charts: 2, columns: 7 },
+  margins:   { tiles: 3, tileGrid: 'grid-cols-2 lg:grid-cols-3', charts: 1, columns: 3 },
+  inventory: { tiles: 4, tileGrid: 'grid-cols-2 lg:grid-cols-4', charts: 1, columns: 3, heading: true },
+  purchases: { tiles: 3, tileGrid: 'grid-cols-2 lg:grid-cols-3', charts: 1, columns: 3 },
+};
+
+function ReportSkeleton({ tab }) {
+  const shape = REPORT_SHAPES[tab] || REPORT_SHAPES.margins;
+  return (
+    <SkeletonRegion label={`Loading the ${tab} report…`}>
+      <div className={cn('mb-s4 grid gap-s3', shape.tileGrid)}>
+        {Array.from({ length: shape.tiles }, (_, i) => (
+          // No sparkline on the margins, inventory and purchases tiles —
+          // those reports carry no series, and reserving the glyph would
+          // leave a gap that never fills.
+          <SkeletonTile key={i} sub={false} trend={tab === 'sales'} />
+        ))}
+      </div>
+
+      <div className={cn('mb-s4 grid gap-s4', shape.charts > 1 && 'xl:grid-cols-2')}>
+        {Array.from({ length: shape.charts }, (_, i) => (
+          <SkeletonChart key={i} subtitle={false} />
+        ))}
+      </div>
+
+      {shape.heading && <Skeleton className="mb-s2 h-5 w-1/4" />}
+      <SkeletonTable columns={shape.columns} />
+    </SkeletonRegion>
+  );
 }
 
 function SalesReport({ data, dimmed }) {

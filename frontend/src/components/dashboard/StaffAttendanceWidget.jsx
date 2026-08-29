@@ -4,7 +4,7 @@ import { useAuth } from '../../hooks/useAuth';
 import { duration, minutesSince, time } from '../../lib/format';
 import Card, { CardBody } from '../../ui/Card';
 import Button from '../../ui/Button';
-import Skeleton from '../../ui/Skeleton';
+import Skeleton, { SkeletonRegion } from '../../ui/Skeleton';
 import { useToast } from '../../ui/Toast';
 import { AttendanceBadge } from '../../domain/StatusBadge';
 import { ClockIcon } from '../../ui/icons';
@@ -74,7 +74,27 @@ export default function StaffAttendanceWidget() {
     }
   }, [toast, load]);
 
-  if (loading) return <Skeleton className="h-24 rounded-card" />;
+  // Shaped like the card below — icon, status over its detail line, and the
+  // check-in button at the end of the row. A bare block would let the button
+  // jump sideways the moment the row lands, under a thumb already moving.
+  if (loading) {
+    return (
+      <SkeletonRegion label="Loading your check-in…">
+        <Card>
+          <CardBody className="flex flex-wrap items-center justify-between gap-s3">
+            <div className="flex min-w-0 items-center gap-s3">
+              <Skeleton className="h-9 w-9 shrink-0 rounded-pill" />
+              <div className="flex min-w-0 flex-col gap-s1">
+                <Skeleton className="h-4 w-32" />
+                <Skeleton className="h-4 w-48" />
+              </div>
+            </div>
+            <Skeleton className="h-target w-40 rounded-pill" />
+          </CardBody>
+        </Card>
+      </SkeletonRegion>
+    );
+  }
 
   // The board is a counter-staff roster, so the API refuses attendance for an
   // owner account. An owner who lands on /staff gets told that rather than a

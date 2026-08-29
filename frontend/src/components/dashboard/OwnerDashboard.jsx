@@ -8,7 +8,9 @@ import Card, { CardBody } from '../../ui/Card';
 import Button from '../../ui/Button';
 import Badge from '../../ui/Badge';
 import ErrorState from '../../ui/ErrorState';
-import Skeleton, { SkeletonRows } from '../../ui/Skeleton';
+import Skeleton, {
+  SkeletonRegion, SkeletonRows, SkeletonTile, SkeletonChart, SkeletonCard,
+} from '../../ui/Skeleton';
 import { Money, Qty } from '../../domain/Money';
 import { StatTile, PaymentMixCard, RevenueTrendCard, PAYMENT_SERIES, deltaVs, shareOf } from '../../domain/charts';
 import { AlertIcon, ClockIcon, PillIcon, ReturnIcon, UsersIcon } from '../../ui/icons';
@@ -51,14 +53,40 @@ export default function OwnerDashboard() {
   }
 
   // First load only — a refetch (retry) keeps the previous render up.
+  //
+  // The grid classes below are copied from the loaded render deliberately: the
+  // tiles, the two chart cards and the 2/3 + 1/3 split are what the page
+  // becomes, so the figures land in the boxes the eye is already looking at
+  // instead of pushing the alert stack down the screen.
   if (loading && !dash) {
     return (
       <div>
         <PageHeader title="Dashboard" subtitle={longDate()} />
-        <div className="mb-s4 grid grid-cols-2 gap-s3 lg:grid-cols-4">
-          {[0, 1, 2, 3].map((n) => <Skeleton key={n} className="h-24 rounded-card" />)}
-        </div>
-        <SkeletonRows count={4} />
+        <SkeletonRegion label="Loading today’s figures…">
+          <div className="mb-s4 grid grid-cols-2 gap-s3 lg:grid-cols-4">
+            {[0, 1, 2, 3].map((n) => <SkeletonTile key={n} />)}
+          </div>
+          <div className="mb-s4 grid grid-cols-2 gap-s3">
+            {/* No weekly series exists, so these two tiles carry no sparkline
+                and the skeleton must not reserve one. */}
+            <SkeletonTile trend={false} />
+            <SkeletonTile trend={false} />
+          </div>
+          <div className="mb-s5 grid gap-s4 lg:grid-cols-3">
+            <SkeletonChart className="lg:col-span-2" />
+            <SkeletonChart height={160} subtitle={false} />
+          </div>
+          <div className="grid gap-s4 lg:grid-cols-3">
+            <div className="flex flex-col gap-s4 lg:col-span-2">
+              <SkeletonRows count={3} leading />
+              <SkeletonCard lines={2} />
+            </div>
+            <div className="flex flex-col gap-s2">
+              <Skeleton className="h-5 w-1/3" />
+              {[0, 1, 2, 3].map((n) => <Skeleton key={n} className="h-target w-full rounded-pill" />)}
+            </div>
+          </div>
+        </SkeletonRegion>
       </div>
     );
   }

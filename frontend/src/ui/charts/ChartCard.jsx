@@ -3,7 +3,7 @@ import Card, { CardHeader, CardTitle, CardDescription, CardBody } from '../Card'
 import Table from '../Table';
 import ErrorState from '../ErrorState';
 import EmptyState from '../EmptyState';
-import Skeleton from '../Skeleton';
+import Skeleton, { SkeletonRegion } from '../Skeleton';
 import { cn } from '../../lib/cn';
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -50,7 +50,11 @@ export default function ChartCard({
         {error ? (
           <ErrorState title="Couldn't draw this chart" message={error.message} onRetry={onRetry} />
         ) : loading ? (
-          <Skeleton className="w-full rounded-control" style={{ height }} />
+          // The card's own title is already on screen, so the announcement
+          // names the chart rather than repeating "loading" on its own (A10).
+          <SkeletonRegion label={`Loading ${title}…`}>
+            <Skeleton className="w-full rounded-control" style={{ height }} />
+          </SkeletonRegion>
         ) : empty ? (
           <EmptyState title={emptyTitle} body={emptyBody} className="border-0" />
         ) : (

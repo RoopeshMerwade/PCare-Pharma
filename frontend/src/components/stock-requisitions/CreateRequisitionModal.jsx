@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../../lib/api';
 import { money, shortDate, plural, count } from '../../lib/format';
-import { Button, Field, NumericInput, Select, Spinner, Textarea } from '../../ui';
+import { Button, Field, NumericInput, Select, Skeleton, SkeletonRegion, Textarea } from '../../ui';
 import { AlertIcon, BoxIcon, CloseIcon, PlusIcon } from '../../ui/icons';
 import { Money, Qty } from '../../domain/Money';
 import FormDialog from '../../patterns/FormDialog';
@@ -64,12 +64,14 @@ function effectiveVendorId(line, vendors) {
 function VendorSelect({ line, vendors, vendorId, onChange }) {
   const split = splitVendors(vendors);
 
+  // Stands in for the <select> itself, at the control's own height — the row
+  // below it (last bought / what it saves) only exists once a vendor is
+  // chosen, so nothing is reserved for it.
   if (!split) {
     return (
-      <div className="flex min-h-target items-center gap-s2 text-base text-muted-foreground">
-        <Spinner className="h-4 w-4" />
-        Looking up rates…
-      </div>
+      <SkeletonRegion label={`Looking up rates for ${line.medicine_name}…`}>
+        <Skeleton className="h-target w-full rounded-control" />
+      </SkeletonRegion>
     );
   }
 
@@ -248,10 +250,21 @@ function LowStockPicker({ open, onOpenChange, alreadyAdded, onAdd }) {
 
       {open && (
         <div className="border-t border-border p-s3">
+          {/* The tick list, in place, so the first medicine can be ticked the
+              instant it lands rather than after the panel has resized. */}
           {rows === null && (
-            <div className="flex items-center gap-s2 text-base text-muted-foreground">
-              <Spinner className="h-4 w-4" /> Checking the shelves…
-            </div>
+            <SkeletonRegion label="Checking the shelves…" className="flex flex-col gap-s1">
+              {[0, 1, 2].map((n) => (
+                <div key={n} className="flex min-h-target items-center gap-s3 px-s2 py-s1">
+                  <Skeleton className="h-5 w-5 shrink-0" />
+                  <div className="flex min-w-0 flex-1 flex-col gap-s1">
+                    <Skeleton className="h-4 w-1/3" />
+                    <Skeleton className="h-4 w-1/2" />
+                  </div>
+                  <Skeleton className="h-4 w-16 shrink-0" />
+                </div>
+              ))}
+            </SkeletonRegion>
           )}
 
           {error && <p role="alert" className="text-base text-destructive">{error}</p>}

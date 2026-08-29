@@ -5,7 +5,7 @@ import { Dialog, DialogContent, DialogHeader, DialogBody, DialogFooter, DialogCl
 import Button from '../../ui/Button';
 import Input from '../../ui/Input';
 import Field from '../../ui/Field';
-import Spinner from '../../ui/Spinner';
+import { SkeletonRegion, SkeletonRows } from '../../ui/Skeleton';
 import EmptyState from '../../ui/EmptyState';
 import { Money } from '../../domain/Money';
 
@@ -120,10 +120,13 @@ export default function MedicineMatchDialog({
               </ul>
             )}
 
+            {/* The input carries its own spinner while it searches; this is
+                the result list holding its place, so the first match does not
+                shove the dialog's footer down as it arrives. */}
             {loading && results.length === 0 && (
-              <p className="flex items-center gap-s2 text-base text-muted-foreground">
-                <Spinner /> Searching the catalogue…
-              </p>
+              <SkeletonRegion label="Searching the catalogue…">
+                <SkeletonRows count={3} />
+              </SkeletonRegion>
             )}
 
             {!loading && searched && results.length === 0 && (
