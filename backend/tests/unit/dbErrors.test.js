@@ -18,6 +18,13 @@ describe('mapDbError', () => {
     expect(err.code).toBe('INVALID_STATUS');
   });
 
+  test('maps QTY_EXCEEDS_SOLD over-return errors to 422', () => {
+    const err = mapDbError({ message: 'QTY_EXCEEDS_SOLD: total returned quantity exceeds quantity sold on the bill' });
+    expect(err.statusCode).toBe(422);
+    expect(err.code).toBe('QTY_EXCEEDS_SOLD');
+    expect(err.message).toBe('Total returned quantity cannot exceed quantity sold on the bill.');
+  });
+
   test('maps unique violations with caller-supplied context', () => {
     const err = mapDbError({ code: '23505', message: 'duplicate key value' },
       { duplicateMessage: 'Batch already exists.', duplicateCode: 'DUPLICATE_BATCH' });

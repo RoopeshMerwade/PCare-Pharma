@@ -53,19 +53,8 @@ async function getBillById(id, actor) {
 }
 
 // ── Sales dashboard totals ────────────────────────────────
-
 async function getSalesTotals(dateFrom, dateTo) {
-  const rows = await repo.getBillsInRange(
-    dateFrom || '1970-01-01',
-    dateTo || new Date().toISOString().slice(0, 10)
-  );
-  const summary = { total: 0, cash: 0, upi: 0, credit: 0, card: 0, count: rows.length };
-  rows.forEach((b) => {
-    const t = parseFloat(b.total || 0);
-    summary.total += t;
-    summary[b.payment_mode] = (summary[b.payment_mode] || 0) + t;
-  });
-  return summary;
+  return await repo.getSalesTotalsSummary(dateFrom, dateTo);
 }
 
 // ── CREATE BILL (the core sell flow) ─────────────────────

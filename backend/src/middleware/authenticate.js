@@ -19,6 +19,7 @@ const authenticate = asyncHandler(async (req, res, next) => {
   if (!profile?.is_active) throw new AppError('Account suspended.', 403, 'ACCOUNT_SUSPENDED');
 
   req.user = profile;
+  req.token = token;
   next();
 });
 

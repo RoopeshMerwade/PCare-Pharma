@@ -2,11 +2,19 @@
 
 const { supabase } = require('../../config/supabase');
 const { AppError } = require('../../utils/AppError');
+const {
+  getISTDateString,
+  getISTMonthStart,
+  getISTDaysAgo,
+  getISTStartOfDay,
+  getISTEndOfDay,
+  getISOWeekKey,
+} = require('../../utils/date');
 
 // ── SALES REPORT
 async function getSalesReport({ dateFrom, dateTo, groupBy = 'day' } = {}) {
-  const from = dateFrom || new Date(new Date().setDate(1)).toISOString().slice(0,10);
-  const to   = dateTo   || new Date().toISOString().slice(0,10);
+  const from = dateFrom || getISTMonthStart();
+  const to   = dateTo   || getISTDateString();
 
   const { data, error } = await supabase
     .from('daily_sales_summary')
@@ -22,10 +30,9 @@ async function getSalesReport({ dateFrom, dateTo, groupBy = 'day' } = {}) {
   if (groupBy === 'week' || groupBy === 'month') {
     const grouped = {};
     data.forEach(r => {
-      const d = new Date(r.sale_date);
       const key = groupBy === 'week'
-        ? `${d.getFullYear()}-W${String(Math.ceil((d.getDate() + new Date(d.getFullYear(), d.getMonth(), 1).getDay()) / 7)).padStart(2,'0')}`
-        : `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+        ? getISOWeekKey(r.sale_date)
+        : r.sale_date.slice(0, 7);
       if (!grouped[key]) grouped[key] = { period: key, bill_count:0, total_revenue:0, cash_total:0, upi_total:0, credit_total:0, card_total:0 };
       grouped[key].bill_count    += r.bill_count;
       grouped[key].total_revenue += parseFloat(r.total_revenue);
@@ -68,11 +75,11 @@ async function getMarginReport({ categoryId, limit = 50 } = {}) {
 
 // ── VENDOR / PURCHASE REPORT
 async function getPurchaseReport({ supplierId, dateFrom, dateTo } = {}) {
-  const from = dateFrom || new Date(new Date().setMonth(new Date().getMonth() - 3)).toISOString().slice(0,10);
-  const to   = dateTo   || new Date().toISOString().slice(0,10);
+  const from = dateFrom || getISTDaysAgo(90);
+  const to   = dateTo   || getISTDateString();
 
   let q = supabase.from('purchases_with_totals').select('*')
-    .gte('created_at', from).lte('created_at', to + 'T23:59:59')
+    .gte('created_at', getISTStartOfDay(from)).lte('created_at', getISTEndOfDay(to))
     .order('created_at', { ascending: false });
   if (supplierId) q = q.eq('supplier_id', supplierId);
 
@@ -108,8 +115,8 @@ async function getInventoryReport() {
 
 // ── TOP SELLING MEDICINES (for dashboard widget)
 async function getTopMedicines({ dateFrom, dateTo, limit = 10 } = {}) {
-  const from = dateFrom || new Date(new Date().setDate(1)).toISOString().slice(0,10);
-  const to   = dateTo   || new Date().toISOString().slice(0,10);
+  const from = dateFrom || getISTMonthStart();
+  const to   = dateTo   || getISTDateString();
 
   const { data, error } = await supabase.rpc('top_medicines_by_qty', { p_from: from, p_to: to, p_limit: limit }).catch(() => ({ data: null, error: 'rpc not found' }));
 
@@ -117,7 +124,7 @@ async function getTopMedicines({ dateFrom, dateTo, limit = 10 } = {}) {
   if (error || !data) {
     const { data: items } = await supabase.from('bill_items')
       .select('medicine_id, qty, medicines(name, unit)')
-      .gte('created_at', from).lte('created_at', to + 'T23:59:59');
+      .gte('created_at', getISTStartOfDay(from)).lte('created_at', getISTEndOfDay(to));
     const agg = {};
     (items||[]).forEach(i => {
       if (!agg[i.medicine_id]) agg[i.medicine_id] = { medicine_id: i.medicine_id, name: i.medicines?.name, unit: i.medicines?.unit, total_qty: 0 };

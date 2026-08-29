@@ -37,7 +37,7 @@ const login = asyncHandler(async (req, res) => {
 });
 
 const logout = asyncHandler(async (req, res) => {
-  await authService.logout(req.user.id);
+  await authService.logout(req.token, req.user.id);
   res.clearCookie(REFRESH_COOKIE, { path: '/api/v1/auth' });
   return ApiResponse.success(res, null, 'Logged out successfully');
 });

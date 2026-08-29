@@ -31,19 +31,19 @@ join public.medicines m          on m.id  = bi.medicine_id
 join public.medicine_categories mc on mc.id = m.category_id
 group by m.id, m.name, mc.name, mc.color;
 
--- Daily sales summary view
+-- Daily sales summary view (timezone normalized to Asia/Kolkata)
 create or replace view public.daily_sales_summary as
 select
-  date_trunc('day', b.created_at)::date as sale_date,
+  (date_trunc('day', b.created_at at time zone 'Asia/Kolkata'))::date as sale_date,
   count(b.id)                            as bill_count,
-  coalesce(sum(bt.total), 0)             as total_revenue,
-  coalesce(sum(case when b.payment_mode='cash'   then bt.total else 0 end), 0) as cash_total,
-  coalesce(sum(case when b.payment_mode='upi'    then bt.total else 0 end), 0) as upi_total,
-  coalesce(sum(case when b.payment_mode='credit' then bt.total else 0 end), 0) as credit_total,
-  coalesce(sum(case when b.payment_mode='card'   then bt.total else 0 end), 0) as card_total
+  coalesce(sum(bt.total), 0::numeric)             as total_revenue,
+  coalesce(sum(case when b.payment_mode='cash'   then bt.total else 0::numeric end), 0::numeric) as cash_total,
+  coalesce(sum(case when b.payment_mode='upi'    then bt.total else 0::numeric end), 0::numeric) as upi_total,
+  coalesce(sum(case when b.payment_mode='credit' then bt.total else 0::numeric end), 0::numeric) as credit_total,
+  coalesce(sum(case when b.payment_mode='card'   then bt.total else 0::numeric end), 0::numeric) as card_total
 from public.bills b
 join public.bills_with_totals bt on bt.id = b.id
-group by date_trunc('day', b.created_at)::date;
+group by (date_trunc('day', b.created_at at time zone 'Asia/Kolkata'))::date;
 
 -- ══════════════════════════════════════════
 -- MODULE 16: NOTIFICATIONS

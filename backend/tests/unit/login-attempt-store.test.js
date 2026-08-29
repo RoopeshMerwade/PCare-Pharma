@@ -143,23 +143,43 @@ describe.each([
   });
 });
 
-/* ═════════════════ Postgres-specific: failure posture ═════════════════ */
+/* ═════════════════ Postgres-specific: failure posture & bounded fallback ═════════════════ */
 
-describe('postgres store fails OPEN, and only open', () => {
-  // A database blip must not lock the whole pharmacy out of the till. This does
-  // not leave login unprotected: nginx's zone and the 40-per-15-min IP backstop
-  // in app.js both still apply, and the attempt still has to satisfy Supabase
-  // Auth. Failing CLOSED here would turn a transient network error into "nobody
-  // can sign in", which is the outage the old IP-keyed limiter already caused.
-  test('an unreadable store reports no record rather than a lockout', async () => {
+describe('postgres store bounded local fallback', () => {
+  // When database RPC or network is transiently down, the postgres store falls back
+  // to a bounded process-local counter so failed attempts are still captured locally
+  // rather than dropping to zero.
+  test('an unseen key with unreadable store returns null', async () => {
     mockDb.failReads = true;
     expect(await store.createPostgresStore().read(KEY)).toBeNull();
   });
 
-  test('a failed increment does not invent a count', async () => {
+  test('a failed RPC increment uses the bounded process-local fallback counter', async () => {
     mockDb.failRpc = true;
-    const result = await store.createPostgresStore().increment(KEY);
-    expect(result.count).toBe(0);
+    const s = store.createPostgresStore();
+    const result1 = await s.increment(KEY);
+    expect(result1.count).toBe(1);
+    const result2 = await s.increment(KEY);
+    expect(result2.count).toBe(2);
+    expect((await s.read(KEY)).count).toBe(2);
+  });
+
+  test('when database recovers, the higher count is preserved and clearing clears both', async () => {
+    const s = store.createPostgresStore();
+    // 1 attempt with DB healthy
+    await s.increment(KEY);
+    // 2 attempts during DB RPC failure
+    mockDb.failRpc = true;
+    mockDb.failReads = true;
+    await s.increment(KEY);
+    await s.increment(KEY);
+    // DB recovers
+    mockDb.failRpc = false;
+    mockDb.failReads = false;
+    const rec = await s.read(KEY);
+    expect(rec.count).toBeGreaterThanOrEqual(3);
+    await s.clear(KEY);
+    expect(await s.read(KEY)).toBeNull();
   });
 });
 

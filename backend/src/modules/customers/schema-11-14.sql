@@ -39,18 +39,38 @@ create policy "owner_update_customer" on public.customers
     exists (select 1 from public.users u where u.id = auth.uid() and u.role = 'owner')
   );
 
--- View: customers with aggregated purchase stats
+-- View: customers with aggregated purchase stats (optimized single-pass aggregation)
 create or replace view public.customers_with_stats as
+with bill_lines as (
+  select
+    b.id as bill_id,
+    coalesce(b.customer_id, c.id) as customer_id,
+    b.created_at,
+    (coalesce(sum(bi.qty * bi.unit_price), 0::numeric) - coalesce(b.discount_amount, 0::numeric)) as total,
+    count(bi.id) as item_count
+  from public.bills b
+  join public.customers c on (b.customer_id = c.id or (b.customer_id is null and b.customer_phone = c.phone and c.phone is not null))
+  left join public.bill_items bi on bi.bill_id = b.id
+  group by b.id, coalesce(b.customer_id, c.id)
+),
+cust_totals as (
+  select
+    customer_id,
+    count(bill_id)::bigint as total_bills,
+    coalesce(sum(total), 0::numeric) as total_spent,
+    max(created_at) as last_purchase_at,
+    coalesce(sum(item_count), 0)::numeric as total_items_purchased
+  from bill_lines
+  group by customer_id
+)
 select
   c.*,
-  count(distinct b.id)                            as total_bills,
-  coalesce(sum(bwt.total), 0)                     as total_spent,
-  max(b.created_at)                               as last_purchase_at,
-  coalesce(sum(bwt.item_count), 0)                as total_items_purchased
+  coalesce(ct.total_bills, 0::bigint) as total_bills,
+  coalesce(ct.total_spent, 0::numeric) as total_spent,
+  ct.last_purchase_at,
+  coalesce(ct.total_items_purchased, 0::numeric) as total_items_purchased
 from public.customers c
-left join public.bills b on b.customer_phone = c.phone and b.customer_phone is not null
-left join public.bills_with_totals bwt on bwt.id = b.id
-group by c.id;
+left join cust_totals ct on ct.customer_id = c.id;
 
 -- ════════════════════════════════════════════════════════════
 -- MODULE 12: CUSTOMER RETURNS

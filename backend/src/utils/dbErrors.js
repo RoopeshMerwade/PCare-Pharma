@@ -11,6 +11,7 @@ const RPC_ERROR_MAP = {
   INVALID_STATUS:     [409, 'INVALID_STATUS', 'This record is not in a valid state for that operation.'],
   NO_ITEMS:           [422, 'NO_ITEMS', 'At least one item is required.'],
   PRICE_EXCEEDS_MRP:  [422, 'PRICE_EXCEEDS_MRP', 'Selling price cannot exceed MRP (Indian pharmacy law).'],
+  QTY_EXCEEDS_SOLD:   [422, 'QTY_EXCEEDS_SOLD', 'Total returned quantity cannot exceed quantity sold on the bill.'],
   ITEM_NOT_FOUND:     [404, 'ITEM_NOT_FOUND', 'Item not found on this order.'],
   PURCHASE_NOT_FOUND: [404, 'PURCHASE_NOT_FOUND', 'Purchase order not found.'],
   LEDGER_IMMUTABLE:   [409, 'LEDGER_IMMUTABLE', 'Stock ledger entries can never be modified.'],

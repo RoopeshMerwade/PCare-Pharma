@@ -613,8 +613,8 @@ function LastBillReceipt({ bill, onDismiss }) {
               <span className="min-w-0 truncate text-base text-foreground">
                 {item.medicines?.name} × {item.qty}
                 {item.is_loose
-                  ? ` ${contentNoun(null, { plural: item.qty !== 1 })}`
-                  : ''}
+                  ? ` ${contentNoun(item.medicines?.pack_content_unit || item.pack_content_unit, { plural: item.qty !== 1 })}`
+                  : ` ${sealedNoun(item.medicines?.unit || item.unit, { plural: item.qty !== 1 })}`}
               </span>
               <Money value={item.qty * item.unit_price} />
             </li>

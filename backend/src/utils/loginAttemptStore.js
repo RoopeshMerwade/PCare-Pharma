@@ -94,6 +94,11 @@ function createMemoryStore() {
    with the old IP-keyed limiter. */
 
 function createPostgresStore() {
+  // Bounded process-local fallback to prevent an attacker from bypassing the limiter
+  // if the database is transiently unreachable. Note: process-local memory is not
+  // globally synchronized across multiple Node.js cluster workers, but prevents 0-count fail-open.
+  const memFallback = createMemoryStore();
+
   return {
     name: 'postgres',
 
@@ -105,42 +110,45 @@ function createPostgresStore() {
         .maybeSingle();
 
       if (error) {
-        logger.warn({ reason: error.message }, 'Login-attempt read failed; allowing the attempt through');
-        return null;
+        logger.warn({ reason: error.message }, 'Login-attempt read failed; checking bounded local fallback');
+        return memFallback.read(key);
       }
-      if (!data) return null;
+      if (!data) return memFallback.read(key);
 
       const firstAttempt = new Date(data.window_started_at).getTime();
-      // A window that has already rolled is not a lockout. The RPC resets it on
-      // the next failure; treating it as absent here keeps read and write
-      // agreeing about when 15 minutes are up.
-      if (Date.now() - firstAttempt >= WINDOW_MS) return null;
+      if (Date.now() - firstAttempt >= WINDOW_MS) {
+        await memFallback.clear(key);
+        return null;
+      }
 
-      return { count: data.attempt_count, firstAttempt };
+      const mem = await memFallback.read(key);
+      const count = Math.max(data.attempt_count, mem?.count || 0);
+      return { count, firstAttempt: Math.min(firstAttempt, mem?.firstAttempt || firstAttempt) };
     },
 
     async increment(key) {
+      const localResult = await memFallback.increment(key);
       const { data, error } = await supabase.rpc('record_login_attempt', {
         p_key: key,
         p_window_seconds: Math.floor(WINDOW_MS / 1000),
       });
 
       if (error) {
-        logger.warn({ reason: error.message }, 'Login-attempt increment failed; this failure was not counted');
-        return { count: 0, firstAttempt: Date.now() };
+        logger.warn({ reason: error.message }, 'Login-attempt DB increment failed; using bounded local counter');
+        return localResult;
       }
 
-      // The RPC returns a single row (setof), so supabase-js hands back an array.
       const row = Array.isArray(data) ? data[0] : data;
-      if (!row) return { count: 0, firstAttempt: Date.now() };
+      if (!row) return localResult;
 
       return {
-        count: row.attempt_count,
+        count: Math.max(row.attempt_count, localResult.count),
         firstAttempt: new Date(row.window_started_at).getTime(),
       };
     },
 
     async clear(key) {
+      await memFallback.clear(key);
       const { error } = await supabase.from('login_attempts').delete().eq('attempt_key', key);
       if (error) logger.warn({ reason: error.message }, 'Login-attempt clear failed');
     },

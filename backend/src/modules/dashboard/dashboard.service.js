@@ -9,11 +9,19 @@ const { getTodayBoard } = require('../attendance/attendance.service');
 const {
   getPendingRequisitionBoard, getMyPendingRequisitions,
 } = require('../stock-requisitions/stock-requisitions.service');
+const {
+  getISTDateString,
+  getISTMonthStart,
+  getISTWeekStart,
+  getISTDaysAgo,
+  getISTStartOfDay,
+  getISTEndOfDay,
+} = require('../../utils/date');
 
-const today      = () => new Date().toISOString().slice(0,10);
-const monthStart = () => new Date(new Date().setDate(1)).toISOString().slice(0,10);
-const weekStart  = () => { const d=new Date(); d.setDate(d.getDate()-d.getDay()); return d.toISOString().slice(0,10); };
-const daysAgo    = (n) => { const d=new Date(); d.setDate(d.getDate()-n); return d.toISOString().slice(0,10); };
+const today      = () => getISTDateString();
+const monthStart = () => getISTMonthStart();
+const weekStart  = () => getISTWeekStart();
+const daysAgo    = (n) => getISTDaysAgo(n);
 
 // Window for the dashboard sparklines and the revenue trend chart.
 const TREND_DAYS = 14;
@@ -53,13 +61,13 @@ async function getOwnerDashboard(ownerId) {
   ] = await Promise.allSettled([
     // Today's sales
     supabase.from('bills_with_totals').select('total, payment_mode, created_by, created_by_name, item_count')
-      .gte('created_at', today()).lte('created_at', today()+'T23:59:59'),
+      .gte('created_at', getISTStartOfDay(today())).lte('created_at', getISTEndOfDay(today())),
     // This week
     supabase.from('bills_with_totals').select('total')
-      .gte('created_at', weekStart()).lte('created_at', today()+'T23:59:59'),
+      .gte('created_at', getISTStartOfDay(weekStart())).lte('created_at', getISTEndOfDay(today())),
     // This month
     supabase.from('bills_with_totals').select('total')
-      .gte('created_at', monthStart()).lte('created_at', today()+'T23:59:59'),
+      .gte('created_at', getISTStartOfDay(monthStart())).lte('created_at', getISTEndOfDay(today())),
     // Last 14 days, day by day — sparklines and the revenue trend chart
     supabase.from('daily_sales_summary')
       .select('sale_date, bill_count, total_revenue, cash_total, upi_total, credit_total, card_total')
@@ -199,7 +207,7 @@ async function getStaffDashboard(staffId) {
   const [todayOwn, lowStock, pendingOwn, myRequisitions] = await Promise.allSettled([
     // Today's bills by this staff
     supabase.from('bills_with_totals').select('id, bill_number, total, customer_name, created_at, item_count')
-      .eq('created_by', staffId).gte('created_at', today()).order('created_at', { ascending: false }),
+      .eq('created_by', staffId).gte('created_at', getISTStartOfDay(today())).order('created_at', { ascending: false }),
     // Low stock alert (top 5 preview + total count)
     supabase.from('medicines_with_stock').select('name, unit, total_stock', { count: 'exact' })
       .eq('is_active', true).eq('is_low_stock', true).order('total_stock').limit(5),

@@ -330,37 +330,34 @@ comment on view public.batch_loose_stock is
   'Loose (opened-pack) balance per batch, summed from loose_unit_ledger. '
   'The "OpenedStock" entity — computed, never stored, so it cannot drift.';
 
--- Scalar subqueries rather than two LEFT JOINs: joining both ledgers and
--- grouping would multiply each ledger''s rows by the other''s and inflate both
--- sums. stock_qty keeps its exact old meaning and old name; sealed_qty is an
--- alias for callers that want to be explicit about which pool they mean.
+-- Optimized view using pre-aggregated ledger CTEs joined once per batch.
 create or replace view public.batches_with_stock as
+with il_agg as (
+  select batch_id, sum(change_qty)::int as stock_qty
+  from public.inventory_ledger
+  group by batch_id
+),
+ll_agg as (
+  select batch_id, sum(change_qty)::int as loose_qty
+  from public.loose_unit_ledger
+  group by batch_id
+)
 select
   b.*,
   m.name          as medicine_name,
   m.unit          as medicine_unit,
   mc.name         as category_name,
   mc.color        as category_color,
-  coalesce((
-    select sum(l.change_qty) from public.inventory_ledger l where l.batch_id = b.id
-  ), 0)::int as stock_qty,
+  coalesce(il.stock_qty, 0) as stock_qty,
   case
     when b.exp_date < current_date then 'expired'
     when b.exp_date <= current_date + interval '90 days' then 'near_expiry'
     else 'ok'
   end as expiry_status,
-  -- ── loose-unit columns (appended; everything above is unchanged) ──
-  coalesce((
-    select sum(l.change_qty) from public.inventory_ledger l where l.batch_id = b.id
-  ), 0)::int as sealed_qty,
-  coalesce((
-    select sum(ll.change_qty) from public.loose_unit_ledger ll where ll.batch_id = b.id
-  ), 0)::int as loose_qty,
+  coalesce(il.stock_qty, 0) as sealed_qty,
+  coalesce(ll.loose_qty, 0) as loose_qty,
   coalesce(b.content_quantity, m.pack_content_quantity) as effective_content_quantity,
   coalesce(b.content_unit,     m.pack_content_unit)     as effective_content_unit,
-  -- coalesced to false, not left as NULL: `true and NULL` is NULL in SQL, so an
-  -- unrecorded quantity beside a countable unit would otherwise answer "don't
-  -- know" to a question the API treats as a yes/no.
   coalesce(
     public.is_countable_content(coalesce(b.content_unit, m.pack_content_unit))
     and coalesce(b.content_quantity, m.pack_content_quantity) > 1,
@@ -368,49 +365,54 @@ select
   ) as loose_sale_supported
 from public.inventory_batches b
 join public.medicines m on m.id = b.medicine_id
-join public.medicine_categories mc on mc.id = m.category_id;
+join public.medicine_categories mc on mc.id = m.category_id
+left join il_agg il on il.batch_id = b.id
+left join ll_agg ll on ll.batch_id = b.id;
 
+-- Optimized view using pre-aggregated CTEs grouped by medicine_id to avoid N correlated subqueries.
 create or replace view public.medicines_with_stock as
+with med_stock as (
+  select
+    ib.medicine_id,
+    coalesce(sum(il.change_qty), 0::bigint)::bigint as total_stock
+  from public.inventory_batches ib
+  join public.inventory_ledger il on il.batch_id = ib.id
+  group by ib.medicine_id
+),
+med_loose as (
+  select
+    ib.medicine_id,
+    coalesce(sum(ll.change_qty), 0::bigint)::bigint as total_loose_stock
+  from public.inventory_batches ib
+  join public.loose_unit_ledger ll on ll.batch_id = ib.id
+  group by ib.medicine_id
+),
+med_expiry as (
+  select
+    ib.medicine_id,
+    count(*)::bigint as near_expiry_batch_count
+  from public.inventory_batches ib
+  where ib.exp_date <= (current_date + interval '90 days')
+    and ib.exp_date >= current_date
+  group by ib.medicine_id
+)
 select
   m.*,
   mc.name  as category_name,
   mc.color as category_color,
-  coalesce((
-    select sum(il.change_qty)
-    from public.inventory_batches ib
-    join public.inventory_ledger  il on il.batch_id = ib.id
-    where ib.medicine_id = m.id
-  ), 0) as total_stock,
-  coalesce((
-    select count(*)
-    from public.inventory_batches ib
-    where ib.medicine_id = m.id
-      and ib.exp_date <= (current_date + interval '90 days')
-      and ib.exp_date >= current_date
-  ), 0) as near_expiry_batch_count,
-  coalesce((
-    select sum(il.change_qty)
-    from public.inventory_batches ib
-    join public.inventory_ledger  il on il.batch_id = ib.id
-    where ib.medicine_id = m.id
-  ), 0) < m.low_stock_threshold as is_low_stock,
-  -- ── loose-unit columns (appended) ──
-  -- total_stock deliberately still counts SEALED units only. It feeds
-  -- is_low_stock, the reorder thresholds and every "12 strips" label in the
-  -- app; folding part-strips into it would change what every one of those
-  -- numbers means.
-  coalesce((
-    select sum(ll.change_qty)
-    from public.inventory_batches ib
-    join public.loose_unit_ledger ll on ll.batch_id = ib.id
-    where ib.medicine_id = m.id
-  ), 0) as total_loose_stock,
+  coalesce(ms.total_stock, 0::bigint) as total_stock,
+  coalesce(me.near_expiry_batch_count, 0::bigint) as near_expiry_batch_count,
+  coalesce(ms.total_stock, 0::bigint) < m.low_stock_threshold as is_low_stock,
+  coalesce(ml.total_loose_stock, 0::bigint) as total_loose_stock,
   coalesce(
     public.is_countable_content(m.pack_content_unit) and m.pack_content_quantity > 1,
     false
   ) as loose_sale_supported
 from public.medicines m
-join public.medicine_categories mc on mc.id = m.category_id;
+join public.medicine_categories mc on mc.id = m.category_id
+left join med_stock ms on ms.medicine_id = m.id
+left join med_loose ml on ml.medicine_id = m.id
+left join med_expiry me on me.medicine_id = m.id;
 
 -- Rebuilt because it selects bws.*. Two changes of substance: a batch holding
 -- only loose tablets still has stock and must still appear, and the value at
@@ -648,6 +650,23 @@ begin
 
   select return_number into v_return_number
     from public.customer_returns where id = p_return_id;
+
+  -- Ensure cumulative returned quantity for any bill item does not exceed sold quantity
+  if exists (
+    select 1
+    from public.customer_return_items cri
+    join public.bill_items bi on bi.id = cri.bill_item_id
+    where cri.return_id = p_return_id
+      and (
+        select coalesce(sum(other_cri.qty_returned), 0)
+        from public.customer_return_items other_cri
+        join public.customer_returns other_cr on other_cr.id = other_cri.return_id
+        where other_cri.bill_item_id = bi.id
+          and other_cr.status = 'approved'
+      ) > bi.qty
+  ) then
+    raise exception 'QTY_EXCEEDS_SOLD: total returned quantity exceeds quantity sold on the bill';
+  end if;
 
   perform 1 from public.inventory_batches b
    where b.id in (select batch_id from public.customer_return_items where return_id = p_return_id)

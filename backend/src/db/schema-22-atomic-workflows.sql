@@ -108,6 +108,23 @@ begin
   select return_number into v_return_number
     from public.customer_returns where id = p_return_id;
 
+  -- Ensure cumulative returned quantity for any bill item does not exceed sold quantity
+  if exists (
+    select 1
+    from public.customer_return_items cri
+    join public.bill_items bi on bi.id = cri.bill_item_id
+    where cri.return_id = p_return_id
+      and (
+        select coalesce(sum(other_cri.qty_returned), 0)
+        from public.customer_return_items other_cri
+        join public.customer_returns other_cr on other_cr.id = other_cri.return_id
+        where other_cri.bill_item_id = bi.id
+          and other_cr.status = 'approved'
+      ) > bi.qty
+  ) then
+    raise exception 'QTY_EXCEEDS_SOLD: total returned quantity exceeds quantity sold on the bill';
+  end if;
+
   perform 1 from public.inventory_batches b
    where b.id in (select batch_id from public.customer_return_items where return_id = p_return_id)
    order by b.id

@@ -107,10 +107,21 @@ async function login({ email, password, ip, userAgent }) {
   return { user: profile, session: data.session };
 }
 
-async function logout(userId) {
-  await createAuthClient().auth.signOut();
-  await logAudit(userId, 'logout', {});
-  logger.info({ userId }, 'User logged out');
+async function logout(token, userId) {
+  if (token) {
+    try {
+      const { error } = await supabase.auth.admin.signOut(token);
+      if (error) {
+        logger.warn({ reason: error.message }, 'Supabase admin signOut returned error during logout');
+      }
+    } catch (err) {
+      logger.warn({ reason: err.message }, 'Supabase admin signOut failed during logout');
+    }
+  }
+  if (userId) {
+    await logAudit(userId, 'logout', {});
+    logger.info({ userId }, 'User logged out');
+  }
 }
 
 async function refreshSession(refreshToken) {
