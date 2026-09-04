@@ -8,6 +8,7 @@ import Field from '../../ui/Field';
 import { SkeletonRegion, SkeletonRows } from '../../ui/Skeleton';
 import EmptyState from '../../ui/EmptyState';
 import { Money } from '../../domain/Money';
+import { formatPackContent, resolveDispensingUnit } from '../../domain/invoice';
 
 /* ═══════════════════════════════════════════════════════════════════════════
    MedicineMatchDialog — resolving one printed line to one catalogue medicine.
@@ -65,6 +66,9 @@ export default function MedicineMatchDialog({
     return () => clearTimeout(debounce.current);
   }, [query, open]);
 
+  const dispensing = resolveDispensingUnit(line);
+  const packContentDesc = formatPackContent(line);
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent size="wide">
@@ -72,12 +76,40 @@ export default function MedicineMatchDialog({
           title="Link this line to a medicine"
           description={
             line?.raw_description
-              ? `The invoice prints “${line.raw_description}”. Pick the catalogue entry it refers to.`
+              ? `The invoice prints “${line.raw_description}”. Pick the catalogue entry it refers to or add a new one.`
               : 'Pick the catalogue entry this line refers to.'
           }
         />
         <DialogBody>
           <div className="flex flex-col gap-s4">
+            {line && (
+              <div className="rounded-card border border-border bg-muted/30 p-s3 text-base">
+                <div className="grid grid-cols-1 gap-x-s3 gap-y-s1 sm:grid-cols-2">
+                  <div>
+                    <span className="text-muted-foreground">Printed: </span>
+                    <span className="font-mono font-medium text-foreground break-words">{line.raw_description || '—'}</span>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">Pack on invoice: </span>
+                    <span className="font-mono font-medium text-foreground">{line.pack_raw || 'Not printed'}</span>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">Dispensing unit: </span>
+                    <span className="font-medium text-foreground">{dispensing.label}</span>{' '}
+                    {dispensing.isExplicit ? (
+                      <span className="text-xs text-muted-foreground">(extracted)</span>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">(inferred from invoice/product)</span>
+                    )}
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">Pack contents: </span>
+                    <span className="font-medium text-foreground">{packContentDesc || 'Not detected'}</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
             <Field
               label="Search the catalogue"
               hint="by brand or generic name"
@@ -173,3 +205,4 @@ export default function MedicineMatchDialog({
     </Dialog>
   );
 }
+

@@ -59,4 +59,39 @@ export const ScanDocIcon = icon(<><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 
    All three sit in the same rail. */
 export const ClipboardIcon = icon(<><path d="M9 4h6a1 1 0 0 1 1 1v1H8V5a1 1 0 0 1 1-1Z" /><path d="M8 6H6.5A1.5 1.5 0 0 0 5 7.5v12A1.5 1.5 0 0 0 6.5 21h11a1.5 1.5 0 0 0 1.5-1.5v-12A1.5 1.5 0 0 0 17.5 6H16" /><path d="M9 12h6M9 16h4" /></>);
 export const DownloadIcon  = icon(<><path d="M12 3v12" /><path d="m7.5 10.5 4.5 4.5 4.5-4.5" /><path d="M4 20h16" /></>);
+/* A rupee struck on a coin, for the cash tile. Cash has no brand, so it is an
+   ordinary currentColor glyph and takes whatever colour its call site is —
+   which on the dashboard is cash's own series slot, the colour its sparkline
+   and its share of the mix bar already wear. Drawn at the set's 1.8 stroke
+   rather than the source file's 2, so it does not sit heavier than the icons
+   beside it on the same screen. */
+export const CashIcon      = icon(<path d="M8.5 9.99984H15.5M8.5 6.5H15.5M14 18.0002L8.5 13.5002L10 13.5C14.4447 13.5 14.4447 6.5 10 6.5M22 12C22 17.5228 17.5228 22 12 22C6.47715 22 2 17.5228 2 12C2 6.47715 6.47715 2 12 2C17.5228 2 22 6.47715 22 12Z" />);
+
+/* ── UPI ──────────────────────────────────────────────────────────────────
+   The one mark in this file that does NOT inherit currentColor, and the one
+   that is not built by icon(): it is NPCI's logo, and a logo is somebody
+   else's asset — recolouring it to fit our palette is not a decision the
+   design system gets to make. Its two brand values live in tokens.css like
+   every other raw colour, reached here as var() strings so lint's ban on raw
+   colour in component code still holds.
+
+   The arrows only, on the original artwork's coordinates (no re-tracing, so
+   nothing can drift): the "UPI" letters that accompany them in the full
+   lockup are illegible at 18px, and the tile they sit on is labelled "UPI
+   today" in text anyway. Orange is painted over green, the source's own
+   order — the two overlap. */
+export function UpiIcon({ className = 'h-[18px] w-[18px]', ...props }) {
+  return (
+    <svg
+      className={className}
+      viewBox="331 41 71 100"
+      fill="none"
+      aria-hidden="true"
+      {...props}
+    >
+      <polygon points="376.59 42.83 401 91.38 349.68 139.92" fill="var(--upi-green)" />
+      <polygon points="359.47 42.83 383.87 91.38 332.52 139.92" fill="var(--upi-orange)" />
+    </svg>
+  );
+}
 

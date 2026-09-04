@@ -7,8 +7,12 @@ import { cn } from '../../lib/cn';
    ReportsPage's local `Stat`, which had already drifted apart.
 
    Contract: `label` · value (children — usually <Money> or a tabular span) ·
-   optional `delta` (signed %, vs a named period) · optional `sub` line ·
-   optional `trend` sparkline.
+   optional `icon` beside the label · optional `delta` (signed %, vs a named
+   period) · optional `sub` line · optional `trend` sparkline.
+
+   The icon is decoration, never information: it sits in front of a label that
+   already says the whole thing in words, so it is wrapped aria-hidden and a
+   tile without one loses nothing but a picture (§3.6, A4).
 
    Delta colour = direction × whether up is good: up wears success; down is
    MUTED with a ↓ glyph, not destructive — a quiet Tuesday is not an error,
@@ -41,6 +45,7 @@ function Delta({ value, label }) {
 
 export default function StatTile({
   label,
+  icon,           // decorative node rendered before the label; see the header
   sub,
   delta,          // signed percent, or null/undefined to show nothing
   deltaLabel,     // "vs yesterday" — deltas always name their base period
@@ -53,7 +58,10 @@ export default function StatTile({
   return (
     <Card className={className}>
       <CardBody className="flex flex-col gap-s1">
-        <span className="text-base text-muted-foreground">{label}</span>
+        <span className="flex items-center gap-s2 text-base text-muted-foreground">
+          {icon && <span className="flex shrink-0 items-center" aria-hidden="true">{icon}</span>}
+          <span className="min-w-0 truncate">{label}</span>
+        </span>
         <div className="flex items-end justify-between gap-s3">
           <div className="min-w-0">{children}</div>
           <Sparkline data={trend} dataKey={trendKey} color={trendColor} className="mb-1" />

@@ -15,6 +15,9 @@ create table if not exists public.medicines (
   low_stock_threshold   int         not null default 20 check (low_stock_threshold >= 0),
   hsn_code              text,                               -- for GST (Phase 2)
   description           text,
+  pack_content_quantity int         check (pack_content_quantity is null or pack_content_quantity > 0),
+  pack_content_unit     text        check (pack_content_unit is null or pack_content_unit in
+                                      ('TABLET','CAPSULE','PIECE','MCG','MG','KG','GM','ML','L','DOSE','IU')),
   is_active             boolean     not null default true,
   created_by            uuid        references public.users(id),
   created_at            timestamptz not null default now(),
@@ -23,7 +26,12 @@ create table if not exists public.medicines (
 
 -- ── Unique: name + manufacturer (prevents duplicates like two "Paracetamol 500mg" from same company)
 create unique index idx_medicines_name_manufacturer
-  on public.medicines(lower(name), lower(coalesce(manufacturer, '')));
+  on public.medicines(
+    lower(name),
+    lower(coalesce(manufacturer, '')),
+    coalesce(pack_content_quantity, 0),
+    lower(coalesce(pack_content_unit, ''))
+  );
 
 -- ── Performance indexes
 create index idx_medicines_category    on public.medicines(category_id) where is_active = true;

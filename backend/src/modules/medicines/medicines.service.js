@@ -145,7 +145,10 @@ async function createMedicine(payload, createdBy) {
 
   if (error) {
     if (error.code === '23505') {
-      throw new AppError(`"${name}" from ${manufacturer || 'this manufacturer'} already exists in the catalog.`, 409, 'DUPLICATE_MEDICINE');
+      const packDesc = pack_content_quantity && pack_content_unit
+        ? ` (${pack_content_quantity} ${pack_content_unit})`
+        : '';
+      throw new AppError(`"${name}"${packDesc} from ${manufacturer || 'this manufacturer'} already exists in the catalog.`, 409, 'DUPLICATE_MEDICINE');
     }
     throw new AppError('Failed to create medicine.', 500, 'DB_ERROR');
   }

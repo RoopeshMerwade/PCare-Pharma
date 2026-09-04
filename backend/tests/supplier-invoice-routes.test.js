@@ -162,7 +162,51 @@ test('quick-add rejects a medicine the Medicines page could not have made', asyn
     .send({ name: 'X Med', category_id: NIL, unit: 'boxes', default_selling_price: 5 });
   expect(badUnit.status).toBe(422);
 });
+test('quick-add validates pack content quantity and unit pairs', async () => {
+  asRole('owner');
+  // Valid pack contents reach the service (500 from stubbed db)
+  const valid = await request(app).post(`/api/v1/supplier-invoices/${NIL}/items/${NIL}/medicine`)
+    .send({
+      name: 'Augmentin 625', category_id: NIL, unit: 'strips', default_selling_price: 150,
+      pack_content_quantity: 10, pack_content_unit: 'TABLET',
+    });
+  expect(valid.status).not.toBe(403);
+  expect(valid.status).not.toBe(422);
+
+  // Missing unit when quantity provided -> 422
+  const missingUnit = await request(app).post(`/api/v1/supplier-invoices/${NIL}/items/${NIL}/medicine`)
+    .send({
+      name: 'Augmentin 625', category_id: NIL, unit: 'strips', default_selling_price: 150,
+      pack_content_quantity: 10,
+    });
+  expect(missingUnit.status).toBe(422);
+
+  // Missing quantity when unit provided -> 422
+  const missingQty = await request(app).post(`/api/v1/supplier-invoices/${NIL}/items/${NIL}/medicine`)
+    .send({
+      name: 'Augmentin 625', category_id: NIL, unit: 'strips', default_selling_price: 150,
+      pack_content_unit: 'TABLET',
+    });
+  expect(missingQty.status).toBe(422);
+
+  // Invalid unit value -> 422
+  const badContentUnit = await request(app).post(`/api/v1/supplier-invoices/${NIL}/items/${NIL}/medicine`)
+    .send({
+      name: 'Augmentin 625', category_id: NIL, unit: 'strips', default_selling_price: 150,
+      pack_content_quantity: 10, pack_content_unit: 'INVALID_UNIT',
+    });
+  expect(badContentUnit.status).toBe(422);
+
+  // Out of range quantity -> 422
+  const outOfRangeQty = await request(app).post(`/api/v1/supplier-invoices/${NIL}/items/${NIL}/medicine`)
+    .send({
+      name: 'Augmentin 625', category_id: NIL, unit: 'strips', default_selling_price: 150,
+      pack_content_quantity: 5000, pack_content_unit: 'TABLET',
+    });
+  expect(outOfRangeQty.status).toBe(422);
+});
 test('reason over 300 chars -> 422', async () => {
   const r = await request(app).post(`/api/v1/supplier-invoices/${NIL}/reject`).send({ reason: 'x'.repeat(400) });
   expect(r.status).toBe(422);
 });
+

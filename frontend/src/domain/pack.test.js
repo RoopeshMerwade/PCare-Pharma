@@ -11,6 +11,7 @@ import {
   looseAvailable,
   lineTotals,
   wholePackHint,
+  dispensedLabel,
 } from './pack';
 
 /* The deliberate mirror of backend/tests/unit/loose-units.test.js. The two
@@ -207,5 +208,40 @@ describe('wholePackHint', () => {
   test('packContents reads the recorded pack, or zero', () => {
     expect(packContents(strip())).toBe(10);
     expect(packContents({})).toBe(0);
+  });
+});
+
+/* The pre-submit summary and the cart line both render this. A bill cannot be
+   edited once created, so the denomination printed on the confirmation is the
+   last chance anyone has to notice that "3" meant tablets and not strips. */
+describe('dispensedLabel', () => {
+  test('keeps the two denominations apart on a mixed line', () => {
+    expect(dispensedLabel(strip({ qty: '2', loose_qty: '3', pack_content_unit: 'TABLET' })))
+      .toBe('2 strips + 3 tablets');
+  });
+
+  test('names only the half that is being dispensed', () => {
+    expect(dispensedLabel(strip({ qty: '2', loose_qty: '0' }))).toBe('2 strips');
+    expect(dispensedLabel(strip({ qty: '0', loose_qty: '4', pack_content_unit: 'TABLET' })))
+      .toBe('4 tablets');
+  });
+
+  test('singularises each half independently', () => {
+    expect(dispensedLabel(strip({ qty: '1', loose_qty: '1', pack_content_unit: 'CAPSULE' })))
+      .toBe('1 strip + 1 capsule');
+  });
+
+  test('an unsplittable line reads in sealed units alone', () => {
+    expect(dispensedLabel(syrup({ qty: '3' }))).toBe('3 bottles');
+  });
+
+  test('falls back to a neutral noun when the pack never said what it holds', () => {
+    expect(dispensedLabel(strip({ qty: '0', loose_qty: '2', pack_content_unit: 'PIECE' })))
+      .toBe('2 units');
+  });
+
+  test('an empty line is null, not "0 strips"', () => {
+    expect(dispensedLabel(strip({ qty: '', loose_qty: '' }))).toBeNull();
+    expect(dispensedLabel(strip({ qty: '0', loose_qty: '0' }))).toBeNull();
   });
 });

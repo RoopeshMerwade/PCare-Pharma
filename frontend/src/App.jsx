@@ -52,7 +52,20 @@ export default function App() {
             what makes the announcement reliable. */}
         <ToastProvider>
           <TooltipProvider>
-            <BrowserRouter>
+            {/* Both v7 flags are opted into early, which is what silences the
+                console warnings react-router v6.30 emits. Each was checked
+                against this app rather than enabled to quiet the log:
+
+                · v7_startTransition wraps router state updates in
+                  startTransition. The hazard is a React.lazy component
+                  suspending inside a transition with no Suspense boundary to
+                  catch it — this app has neither, so there is nothing to
+                  suspend.
+                · v7_relativeSplatPath changes how RELATIVE paths resolve
+                  inside a splat route. The only splat here is the 404 below,
+                  and it navigates to an absolute "/", so no resolution
+                  changes. Revisit if a nested splat ever gains relative links. */}
+            <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
               <Routes>
                 {/* Public */}
                 <Route path="/login" element={<LoginPage />} />

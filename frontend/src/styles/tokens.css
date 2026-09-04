@@ -177,6 +177,22 @@
   --chart-accent: rgb(var(--color-accent-deep));        /* single-series colour  */
   --chart-cursor-fill: rgb(var(--color-border-default) / 0.4);  /* bar hover wash */
 
+  /* ── Colour · third-party brand marks [EXT] ─────────────────────────────
+     The UPI mark (ui/icons.jsx) is NPCI's artwork, not ours. A logo is not
+     restyled by our theme, so these two are declared ONCE and deliberately
+     not redeclared in the dark blocks below — a brand that changed colour
+     with the toggle would stop being the brand. They are full colours rather
+     than RGB channels because nothing ever tints a logo: no alpha modifier,
+     no Tailwind utility. Component code passes "var(--upi-green)" exactly the
+     way charts pass "var(--chart-N)", so the raw value still only lives here.
+
+     Both are decorative, never the sole carrier of meaning — the tile beside
+     the mark is labelled "UPI today" in text. Measured anyway: green is
+     5.02:1 on the light card and 3.12:1 on the dark one; orange is 2.94:1
+     light and 5.31:1 dark, so between the pair the mark always reads.       */
+  --upi-green:  #0F8041;
+  --upi-orange: #E97726;
+
   /* ── Typography ─────────────────────────────────────────────────────────
      §2.1. font.size.xs and font.size.base are both 14px in the spec; stored
      once, aliased in the Tailwind config rather than duplicated.

@@ -3,15 +3,15 @@ import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import useNotifications from '../../hooks/useNotifications';
 import { cn } from '../../lib/cn';
-import { initials } from '../../lib/format';
 import Button from '../../ui/Button';
 import { Drawer, DrawerContent } from '../../ui/Drawer';
 import NotificationBell, { UnreadBadge } from './NotificationBell';
 import ThemeToggle from './ThemeToggle';
+import UserMenu from './UserMenu';
 import {
   HomeIcon, BillIcon, ListIcon, BoxIcon, PillIcon, UsersIcon, ReturnIcon,
   TruckIcon, CartIcon, ClockIcon, ChartIcon, TagIcon, BellIcon, GearIcon,
-  ShieldIcon, LogoutIcon, ChevronIcon, MenuIcon, CloseIcon, ScanDocIcon,
+  ShieldIcon, ChevronIcon, MenuIcon, CloseIcon, ScanDocIcon,
   ClipboardIcon,
 } from '../../ui/icons';
 
@@ -80,10 +80,19 @@ const NAV_GROUPS = [
       { to: '/categories',    label: 'Categories',    icon: TagIcon,    role: 'owner' },
       { to: '/users',         label: 'Staff',         icon: UsersIcon,  role: 'owner' },
       { to: '/notifications', label: 'Notifications', icon: BellIcon },
-      { to: '/settings',      label: 'Settings',      icon: GearIcon,   role: 'owner' },
       { to: '/audit-logs',    label: 'Audit log',     icon: ShieldIcon, role: 'owner' },
     ],
   },
+];
+
+/* Pinned to the foot of the rail rather than scrolling with the groups above.
+   Settings is the one destination that is reached rarely and needed from
+   anywhere, so it gets the fixed corner every desktop app puts it in — it does
+   not move as the nav list grows, and it is never the thing you scroll past
+   looking for Inventory. Role-filtered exactly like NAV_GROUPS: absent for
+   Staff, never present-and-disabled (§3.6, A9). */
+const FOOTER_NAV = [
+  { to: '/settings', label: 'Settings', icon: GearIcon, role: 'owner' },
 ];
 
 // The five a counter hand needs within one thumb's reach.
@@ -122,6 +131,7 @@ export default function AppShell({ children, title }) {
   const visibleGroups = NAV_GROUPS
     .map((g) => ({ ...g, items: g.items.filter((i) => !i.role || i.role === user?.role) }))
     .filter((g) => g.items.length > 0);
+  const footerItems = FOOTER_NAV.filter((i) => !i.role || i.role === user?.role);
 
   const handleLogout = async () => { await logout(); navigate('/login'); };
 
@@ -141,9 +151,8 @@ export default function AppShell({ children, title }) {
         <SidebarPanel
           collapsed={collapsed}
           groups={visibleGroups}
-          user={user}
+          footerItems={footerItems}
           unreadCount={notifications.unreadCount}
-          onLogout={handleLogout}
           headerAction={
             <Button
               variant="ghost"
@@ -164,9 +173,8 @@ export default function AppShell({ children, title }) {
           <SidebarPanel
             collapsed={false}
             groups={visibleGroups}
-            user={user}
+            footerItems={footerItems}
             unreadCount={notifications.unreadCount}
-            onLogout={handleLogout}
             onNavigate={() => setDrawerOpen(false)}
             titleId="drawer-title"
             headerAction={
@@ -199,6 +207,10 @@ export default function AppShell({ children, title }) {
           <div className="ml-auto flex items-center gap-s2">
             <ThemeToggle />
             <NotificationBell notifications={notifications} isOwner={isOwner} />
+            {/* Identity and sign-out live here, not in the rail: the header is
+                the one region present at every breakpoint and in both rail
+                states. */}
+            <UserMenu user={user} onLogout={handleLogout} />
           </div>
         </header>
 
@@ -248,10 +260,53 @@ export default function AppShell({ children, title }) {
   );
 }
 
+/* One nav row, module scope, used by both the scrolling groups and the pinned
+   footer — so the pinned Settings item cannot drift from the items above it in
+   height, active treatment or collapsed behaviour. */
+function SidebarNavLink({ item, collapsed, unreadCount = 0, onNavigate }) {
+  return (
+    <NavLink
+      to={item.to}
+      end
+      onClick={onNavigate}
+      title={collapsed ? item.label : undefined}
+      aria-label={
+        item.to === '/notifications' && unreadCount > 0
+          ? `${item.label}, ${unreadCount} unread`
+          : undefined
+      }
+      className={({ isActive }) =>
+        cn(
+          'relative flex min-h-target items-center rounded-control text-base',
+          'transition-colors duration-instant',
+          collapsed ? 'justify-center px-s2' : 'gap-s2 px-s3',
+          // A4: the current item is marked by weight AND fill, so
+          // it survives the grayscale test. NavLink also sets
+          // aria-current="page" for assistive tech.
+          isActive
+            ? 'bg-primary font-bold text-primary-foreground'
+            : 'font-normal text-muted-foreground hover:bg-muted hover:text-foreground'
+        )
+      }
+    >
+      <item.icon className="h-[18px] w-[18px] shrink-0" />
+      {!collapsed && <span className="truncate">{item.label}</span>}
+      {item.to === '/notifications' && (
+        // Expanded: trails the label. Collapsed: the label is
+        // gone, so it pins to the icon's top-right corner.
+        <UnreadBadge
+          count={unreadCount}
+          className={collapsed ? 'absolute right-s1 top-s1' : 'ml-auto'}
+        />
+      )}
+    </NavLink>
+  );
+}
+
 /* Rendered twice — as the rail and as the drawer — so navigation cannot drift
    between breakpoints. `collapsed` is icon-only mode and applies to the rail
    only; the drawer is never collapsed. */
-function SidebarPanel({ collapsed, groups, user, unreadCount = 0, onLogout, headerAction, onNavigate, titleId }) {
+function SidebarPanel({ collapsed, groups, footerItems = [], unreadCount = 0, headerAction, onNavigate, titleId }) {
   return (
     <>
       <div className={cn('flex shrink-0 py-s4', collapsed ? 'flex-col items-center gap-s3 px-s2' : 'items-center justify-between gap-s2 px-s4')}>
@@ -275,42 +330,13 @@ function SidebarPanel({ collapsed, groups, user, unreadCount = 0, onLogout, head
               )}
               <div className="flex flex-col gap-s1">
                 {group.items.map((item) => (
-                  <NavLink
+                  <SidebarNavLink
                     key={item.to}
-                    to={item.to}
-                    end
-                    onClick={onNavigate}
-                    title={collapsed ? item.label : undefined}
-                    aria-label={
-                      item.to === '/notifications' && unreadCount > 0
-                        ? `${item.label}, ${unreadCount} unread`
-                        : undefined
-                    }
-                    className={({ isActive }) =>
-                      cn(
-                        'relative flex min-h-target items-center rounded-control text-base',
-                        'transition-colors duration-instant',
-                        collapsed ? 'justify-center px-s2' : 'gap-s2 px-s3',
-                        // A4: the current item is marked by weight AND fill, so
-                        // it survives the grayscale test. NavLink also sets
-                        // aria-current="page" for assistive tech.
-                        isActive
-                          ? 'bg-primary font-bold text-primary-foreground'
-                          : 'font-normal text-muted-foreground hover:bg-muted hover:text-foreground'
-                      )
-                    }
-                  >
-                    <item.icon className="h-[18px] w-[18px] shrink-0" />
-                    {!collapsed && <span className="truncate">{item.label}</span>}
-                    {item.to === '/notifications' && (
-                      // Expanded: trails the label. Collapsed: the label is
-                      // gone, so it pins to the icon's top-right corner.
-                      <UnreadBadge
-                        count={unreadCount}
-                        className={collapsed ? 'absolute right-s1 top-s1' : 'ml-auto'}
-                      />
-                    )}
-                  </NavLink>
+                    item={item}
+                    collapsed={collapsed}
+                    unreadCount={unreadCount}
+                    onNavigate={onNavigate}
+                  />
                 ))}
               </div>
             </div>
@@ -318,32 +344,27 @@ function SidebarPanel({ collapsed, groups, user, unreadCount = 0, onLogout, head
         </div>
       </nav>
 
-      <div className={cn('shrink-0 mt-auto border-t border-border py-s3', collapsed ? 'px-s2' : 'px-s3')}>
-        <div
-          className={cn('flex items-center py-s2', collapsed ? 'justify-center' : 'gap-s2 px-s3')}
-          title={collapsed ? `${user?.full_name} · ${user?.role}` : undefined}
-        >
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-pill bg-primary text-base font-bold text-primary-foreground">
-            {initials(user?.full_name)}
-          </span>
-          {!collapsed && (
-            <span className="min-w-0 flex-1">
-              <span className="block truncate text-base font-bold text-foreground">{user?.full_name}</span>
-              <span className="block text-base capitalize text-muted-foreground">{user?.role}</span>
-            </span>
+      {/* Outside the scrolling <nav> above, so it stays put at the foot of the
+          rail however long the list of groups gets. Its own landmark with its
+          own name — two <nav>s in one region need distinguishable labels. */}
+      {footerItems.length > 0 && (
+        <nav
+          aria-label="Settings"
+          className={cn(
+            'shrink-0 mt-auto flex flex-col gap-s1 border-t border-border py-s3',
+            collapsed ? 'px-s2' : 'px-s3'
           )}
-        </div>
-
-        <Button
-          variant="ghost"
-          onClick={onLogout}
-          title={collapsed ? 'Log out' : undefined}
-          className={cn('mt-s1 w-full', collapsed ? 'justify-center px-s2' : 'justify-start gap-s2 px-s3')}
         >
-          <LogoutIcon className="h-[18px] w-[18px] shrink-0" />
-          {!collapsed && 'Log out'}
-        </Button>
-      </div>
+          {footerItems.map((item) => (
+            <SidebarNavLink
+              key={item.to}
+              item={item}
+              collapsed={collapsed}
+              onNavigate={onNavigate}
+            />
+          ))}
+        </nav>
+      )}
     </>
   );
 }

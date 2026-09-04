@@ -111,6 +111,16 @@ comment on column public.medicines.pack_content_unit is
   'Content unit from parsePack(). Only TABLET/CAPSULE/PIECE can be sold loose; '
   'ML/GM/DOSE are measured contents of a sealed container and never splittable.';
 
+-- ── 27.1b Unique index update: allow distinct commercial pack variants for the same brand & manufacturer
+drop index if exists public.idx_medicines_name_manufacturer;
+create unique index idx_medicines_name_manufacturer
+  on public.medicines(
+    lower(name),
+    lower(coalesce(manufacturer, '')),
+    coalesce(pack_content_quantity, 0),
+    lower(coalesce(pack_content_unit, ''))
+  );
+
 
 -- ── 27.2  Pack contents on the batch ────────────────────────────────────────
 --

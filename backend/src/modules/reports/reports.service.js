@@ -118,7 +118,12 @@ async function getTopMedicines({ dateFrom, dateTo, limit = 10 } = {}) {
   const from = dateFrom || getISTMonthStart();
   const to   = dateTo   || getISTDateString();
 
-  const { data, error } = await supabase.rpc('top_medicines_by_qty', { p_from: from, p_to: to, p_limit: limit }).catch(() => ({ data: null, error: 'rpc not found' }));
+  let data, error;
+  try {
+    ({ data, error } = await supabase.rpc('top_medicines_by_qty', { p_from: from, p_to: to, p_limit: limit }));
+  } catch (e) {
+    error = e;
+  }
 
   // Fallback: query directly
   if (error || !data) {

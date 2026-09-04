@@ -3,6 +3,7 @@ import {
   warningLabel, warningTone, partitionWarnings, warningsForField,
   totalUnits, totalContent, lineValue, printedLineValue, unitMargin, sumLineValues,
   canImport, blockingIssues, lineTitle, inferUnit,
+  resolveDispensingUnit, formatPackContent, inferPackContents,
 } from './invoice';
 
 /* The arithmetic here is duplicated from the backend on purpose (see the note
@@ -232,9 +233,18 @@ describe('unit inference for Quick Add', () => {
     expect(inferUnit({ raw_description: 'CEFTRIAXONE 1G INJ', pack_raw: '1 VIAL' })).toBe('vials');
   });
 
-  test('infers packs for inhalers and combipacks', () => {
+  test('infers packs for inhalers, combipacks, and nutritional foods/malts', () => {
     expect(inferUnit({ raw_description: 'ASTHALIN INHALER 200MD', pack_raw: '1' })).toBe('packs');
     expect(inferUnit({ raw_description: 'RESPULES 2ML', pack_raw: '7X2ML' })).toBe('packs');
+    expect(inferUnit({ raw_description: 'RAGI MALT HEALTH DRINK', pack_raw: '200GM' })).toBe('packs');
+    expect(inferUnit({ raw_description: 'MANNA RAGI MALT', pack_raw: '500G' })).toBe('packs');
+    expect(inferUnit({ raw_description: 'HORLICKS NUTRITION REFILL PACK', pack_raw: '500GM' })).toBe('packs');
+    expect(inferUnit({ raw_description: 'ELECTRAL ORS SACHET', pack_raw: '21.8GM' })).toBe('packs');
+  });
+
+  test('infers bottles for jars and tins', () => {
+    expect(inferUnit({ raw_description: 'HORLICKS 500GM JAR', pack_raw: '500GM' })).toBe('bottles');
+    expect(inferUnit({ raw_description: 'NESTLE CERELAC TIN', pack_raw: '400GM' })).toBe('bottles');
   });
 
   test('infers pcs for soaps and devices', () => {
@@ -242,8 +252,203 @@ describe('unit inference for Quick Add', () => {
     expect(inferUnit({ raw_description: 'CREPE BANDAGE', pack_raw: '1PC' })).toBe('pcs');
   });
 
+  test('respects explicit sale_unit when provided on the line item', () => {
+    expect(inferUnit({ sale_unit: 'PACK', raw_description: 'XYZ PRODUCT', pack_raw: '200GM' })).toBe('packs');
+    expect(inferUnit({ sale_unit: 'BOTTLE', raw_description: 'RAGI MALT DRINK JAR', pack_raw: '200GM' })).toBe('bottles');
+    expect(inferUnit({ sale_unit: 'STRIP', raw_description: 'AUGMENTIN', pack_raw: "10'S" })).toBe('strips');
+  });
+
   test('falls back gracefully to strips when unknown', () => {
     expect(inferUnit({})).toBe('strips');
     expect(inferUnit(null)).toBe('strips');
   });
 });
+
+describe('dispensing unit and pack content formatting for Quick Add / Match modals', () => {
+  test('10\'S counted pack: resolves unit, formats content, and infers pack configuration', () => {
+    const item = {
+      raw_description: 'AUGMENTIN 625 DUO TAB 10\'S',
+      pack_raw: "10'S",
+      sale_unit: 'STRIP',
+      content_quantity: 10,
+      content_unit: 'PIECE',
+      qty_billed: 5,
+      qty_free: 0,
+    };
+    expect(resolveDispensingUnit(item)).toEqual({
+      unit: 'strips',
+      label: 'STRIP',
+      isExplicit: true,
+    });
+    expect(formatPackContent(item)).toBe('10 tablets');
+    expect(inferPackContents(item)).toEqual({
+      quantity: '10',
+      unit: 'TABLET',
+    });
+  });
+
+  test('100ML simple volume pack: formats volume and infers ML unit without converting to count', () => {
+    const item = {
+      raw_description: 'COREX DX COUGH SYRUP 100ML',
+      pack_raw: '100ML',
+      sale_unit: 'BOTTLE',
+      content_quantity: 100,
+      content_unit: 'ML',
+      qty_billed: 6,
+      qty_free: 0,
+    };
+    expect(resolveDispensingUnit(item)).toEqual({
+      unit: 'bottles',
+      label: 'BOTTLE',
+      isExplicit: true,
+    });
+    expect(formatPackContent(item)).toBe('100 ML');
+    expect(inferPackContents(item)).toEqual({
+      quantity: '100',
+      unit: 'ML',
+    });
+  });
+
+  test('30GM simple weight pack: formats weight and infers GM unit', () => {
+    const item = {
+      raw_description: 'BETADINE OINTMENT 30GM',
+      pack_raw: '30GM',
+      sale_unit: 'TUBE',
+      content_quantity: 30,
+      content_unit: 'GM',
+      qty_billed: 10,
+      qty_free: 2,
+    };
+    expect(resolveDispensingUnit(item)).toEqual({
+      unit: 'tubes',
+      label: 'TUBE',
+      isExplicit: true,
+    });
+    expect(formatPackContent(item)).toBe('30 GM');
+    expect(inferPackContents(item)).toEqual({
+      quantity: '30',
+      unit: 'GM',
+    });
+  });
+
+  test('7X2ML nested pack: formats sub-packs and content properly', () => {
+    const item = {
+      raw_description: 'RESPULES 2ML',
+      pack_raw: '7X2ML',
+      sale_unit: 'PACK',
+      sub_pack_quantity: 7,
+      sub_pack_unit: 'AMPOULE',
+      content_quantity: 2,
+      content_unit: 'ML',
+      qty_billed: 20,
+      qty_free: 0,
+    };
+    expect(resolveDispensingUnit(item)).toEqual({
+      unit: 'packs',
+      label: 'PACK',
+      isExplicit: true,
+    });
+    expect(formatPackContent(item)).toBe('7 × 2 ML');
+    expect(inferPackContents(item)).toEqual({
+      quantity: '2',
+      unit: 'ML',
+    });
+  });
+
+  test('missing pack/content extraction: falls back gracefully without guessing', () => {
+    const item = {
+      raw_description: 'UNKNOWN MEDICINE XYZ',
+      pack_raw: null,
+      sale_unit: null,
+      content_quantity: null,
+      content_unit: null,
+      qty_billed: 1,
+      qty_free: 0,
+    };
+    expect(resolveDispensingUnit(item)).toEqual({
+      unit: 'strips',
+      label: 'STRIP',
+      isExplicit: false,
+    });
+    expect(formatPackContent(item)).toBeNull();
+    expect(inferPackContents(item)).toEqual({
+      quantity: '',
+      unit: '',
+    });
+  });
+
+  test('distinguishes explicitly extracted sale_unit vs inferred unit', () => {
+    const explicit = { sale_unit: 'BOTTLE', raw_description: 'XYZ' };
+    expect(resolveDispensingUnit(explicit)).toEqual({
+      unit: 'bottles',
+      label: 'BOTTLE',
+      isExplicit: true,
+    });
+
+    const inferred = { sale_unit: null, raw_description: 'BETADINE OINTMENT', pack_raw: '15GM' };
+    expect(resolveDispensingUnit(inferred)).toEqual({
+      unit: 'tubes',
+      label: 'TUBE',
+      isExplicit: false,
+    });
+  });
+
+  test('ambiguous 10\'S pack without tab/cap evidence: retains PIECE and does not assume TABLET', () => {
+    const item = {
+      raw_description: 'SURGICAL GLOVES LATEX 10\'S',
+      pack_raw: "10'S",
+      sale_unit: 'PACK',
+      content_quantity: 10,
+      content_unit: 'PIECE',
+    };
+    expect(formatPackContent(item)).toBe('10 pieces');
+    expect(inferPackContents(item)).toEqual({
+      quantity: '10',
+      unit: 'PIECE',
+    });
+  });
+
+  test('10\'S capsule pack: resolves unit to CAPSULE when CAP keyword is present', () => {
+    const item = {
+      raw_description: 'RABEPRAZOLE 20MG CAPS 10\'S',
+      pack_raw: "10'S",
+      sale_unit: 'STRIP',
+      content_quantity: 10,
+      content_unit: 'PIECE',
+    };
+    expect(formatPackContent(item)).toBe('10 capsules');
+    expect(inferPackContents(item)).toEqual({
+      quantity: '10',
+      unit: 'CAPSULE',
+    });
+  });
+
+  test('200GM measured pack (e.g. Ragi Malt): retains GM and does not convert to count', () => {
+    const item = {
+      raw_description: 'RAGI MALT HEALTH DRINK 200GM',
+      pack_raw: '200GM',
+      sale_unit: 'PACK',
+      content_quantity: 200,
+      content_unit: 'GM',
+    };
+    expect(formatPackContent(item)).toBe('200 GM');
+    expect(inferPackContents(item)).toEqual({
+      quantity: '200',
+      unit: 'GM',
+    });
+  });
+
+  test('supports free quantity calculation and representation in line models', () => {
+    const item = {
+      raw_description: 'PARACETAMOL TAB 10\'S',
+      qty_billed: 10,
+      qty_free: 2,
+      content_quantity: 10,
+      content_unit: 'PIECE',
+    };
+    expect(totalUnits(item)).toBe(12);
+    expect(totalContent(item)).toEqual({ quantity: 120, unit: 'PIECE' });
+  });
+});
+
+

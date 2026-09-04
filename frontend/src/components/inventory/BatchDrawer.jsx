@@ -13,7 +13,7 @@ import EmptyState from '../../ui/EmptyState';
 import ErrorState from '../../ui/ErrorState';
 import Skeleton, { SkeletonRegion } from '../../ui/Skeleton';
 import { Money, Qty } from '../../domain/Money';
-import { contentNoun, perUnitPrice } from '../../domain/pack';
+import { contentNoun, perUnitPrice, sealedNoun } from '../../domain/pack';
 import { ExpiryBadge, StockBadge } from '../../domain/StatusBadge';
 import { PlusIcon } from '../../ui/icons';
 
@@ -247,28 +247,47 @@ function BatchCard({ batch, isOwner, onAdjust, onWriteOff }) {
 }
 
 export function StockAdjustModal({ batch, open, onOpenChange, onAdjusted }) {
+  const [denomination, setDenomination] = useState('sealed');
   const [qty, setQty] = useState('');
   const [direction, setDirection] = useState('add');
   const [note, setNote] = useState('');
   const [errors, setErrors] = useState({});
 
+  const supportsLoose = Boolean(batch?.loose_sale_supported || Number(batch?.loose_qty) > 0);
+
   useEffect(() => {
-    if (open) { setQty(''); setDirection('add'); setNote(''); setErrors({}); }
-  }, [open]);
+    if (open && batch) {
+      const defaultToLoose = (Number(batch.stock_qty) <= 0 && Number(batch.loose_qty) > 0);
+      setDenomination(defaultToLoose ? 'loose' : 'sealed');
+      setQty('');
+      setDirection('add');
+      setNote('');
+      setErrors({});
+    }
+  }, [open, batch]);
 
   if (!batch) return null;
 
+  const isLoose = denomination === 'loose';
+  const sealedCount = Number(batch.stock_qty) || 0;
+  const looseCount = Number(batch.loose_qty) || 0;
+  const currentStock = isLoose ? looseCount : sealedCount;
+
+  const sealedNounLabel = sealedNoun(batch.medicine_unit, { plural: true });
+  const looseNounLabel = contentNoun(batch.effective_content_unit, { plural: true });
+  const currentUnitLabel = isLoose ? looseNounLabel : sealedNounLabel;
+
   const parsed = parseInt(qty, 10);
   const signed = direction === 'remove' ? -Math.abs(parsed) : Math.abs(parsed);
-  const resulting = (batch.stock_qty ?? 0) + (Number.isFinite(signed) ? signed : 0);
+  const resulting = currentStock + (Number.isFinite(signed) ? signed : 0);
 
   const validate = () => {
     const found = {};
     if (!Number.isFinite(parsed) || parsed === 0) {
-      found.qty = 'Enter how many units to add or remove.';
+      found.qty = `Enter how many ${currentUnitLabel} to add or remove.`;
     } else if (resulting < 0) {
       // Never silently clamp — say exactly what is available (§3.5).
-      found.qty = `Only ${batch.stock_qty} ${batch.medicine_unit} are in this batch. Remove ${batch.stock_qty} or fewer.`;
+      found.qty = `Only ${currentStock} ${currentUnitLabel} are in this batch. Remove ${currentStock} or fewer.`;
     }
     if (note.trim().length < 5) {
       found.note = 'Explain the reason in at least 5 characters — this goes on the permanent ledger.';
@@ -279,19 +298,50 @@ export function StockAdjustModal({ batch, open, onOpenChange, onAdjusted }) {
 
   const handleSubmit = async () => {
     if (!validate()) throw new Error('Check the highlighted fields and try again.');
-    await api.post('/inventory/adjust', { batch_id: batch.id, adjustment_qty: signed, note });
+    await api.post('/inventory/adjust', {
+      batch_id: batch.id,
+      adjustment_qty: signed,
+      note,
+      denomination,
+    });
     onAdjusted();
   };
+
+  const batchDesc = [
+    `${batch.medicine_name} · batch ${batch.batch_no}`,
+    `${sealedCount} ${sealedNoun(batch.medicine_unit, { plural: sealedCount !== 1 })}`,
+    supportsLoose ? `${looseCount} loose` : null,
+  ].filter(Boolean).join(' · ');
 
   return (
     <FormDialog
       open={open}
       onOpenChange={onOpenChange}
       title="Adjust stock"
-      description={`${batch.medicine_name} · batch ${batch.batch_no} · ${batch.stock_qty} ${batch.medicine_unit} on hand`}
+      description={batchDesc}
       submitLabel="Save adjustment"
       onSubmit={handleSubmit}
     >
+      {supportsLoose && (
+        <Field label="Unit type">
+          <Select
+            value={denomination}
+            onChange={(e) => {
+              setDenomination(e.target.value);
+              setQty('');
+              setErrors({});
+            }}
+          >
+            <option value="sealed">
+              Sealed {sealedNounLabel} ({sealedCount} on hand)
+            </option>
+            <option value="loose">
+              Loose {looseNounLabel} ({looseCount} on hand)
+            </option>
+          </Select>
+        </Field>
+      )}
+
       <Field label="Direction">
         <Select value={direction} onChange={(e) => setDirection(e.target.value)}>
           <option value="add">Add stock — found more than recorded</option>
@@ -303,14 +353,19 @@ export function StockAdjustModal({ batch, open, onOpenChange, onAdjusted }) {
         label="Quantity"
         required
         error={errors.qty}
-        hint={batch.medicine_unit}
+        hint={currentUnitLabel}
       >
-        <NumericInput integer value={qty} onChange={(v) => { setQty(v); setErrors((e) => ({ ...e, qty: '' })); }} placeholder="0" />
+        <NumericInput
+          integer
+          value={qty}
+          onChange={(v) => { setQty(v); setErrors((e) => ({ ...e, qty: '' })); }}
+          placeholder="0"
+        />
       </Field>
 
       {Number.isFinite(parsed) && parsed !== 0 && resulting >= 0 && (
         <p className="text-base text-muted-foreground">
-          After this adjustment the batch will hold <strong className="text-foreground">{resulting} {batch.medicine_unit}</strong>.
+          After this adjustment the batch will hold <strong className="text-foreground">{resulting} {currentUnitLabel}</strong>.
         </p>
       )}
 
@@ -319,7 +374,7 @@ export function StockAdjustModal({ batch, open, onOpenChange, onAdjusted }) {
           value={note}
           onChange={(e) => { setNote(e.target.value); setErrors((er) => ({ ...er, note: '' })); }}
           rows={3}
-          placeholder="e.g. Physical count found 2 extra strips"
+          placeholder={isLoose ? 'e.g. 1 tablet crushed or lost during dispensing' : 'e.g. Physical count found 2 extra strips'}
         />
       </Field>
     </FormDialog>

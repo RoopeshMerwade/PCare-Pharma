@@ -160,6 +160,29 @@ export function lineTotals(item) {
 }
 
 /**
+ * "2 strips + 3 tablets" — what is actually being handed over on one cart line.
+ *
+ * Same reasoning as availabilityLabel, applied to the outgoing side: the two
+ * denominations are kept apart because they are physically different things,
+ * and the count of loose pieces is the number a pharmacist checks against what
+ * they are about to cut off a strip.
+ *
+ * Lives here rather than in the billing screen because the line item and the
+ * pre-submit summary must not word it differently — the summary is the last
+ * screen anyone reads before an immutable bill exists.
+ *
+ * Null for an empty line, so the caller renders nothing rather than "0 strips".
+ */
+export function dispensedLabel(item) {
+  const sealed = num(item?.qty);
+  const loose = num(item?.loose_qty);
+  const parts = [];
+  if (sealed > 0) parts.push(`${sealed} ${sealedNoun(item?.unit, { plural: sealed !== 1 })}`);
+  if (loose > 0) parts.push(`${loose} ${contentNoun(item?.pack_content_unit, { plural: loose !== 1 })}`);
+  return parts.length ? parts.join(' + ') : null;
+}
+
+/**
  * Whether a loose quantity is a whole pack or more, and what that is in packs.
  *
  * Advisory, and deliberately not enforced. Asking for ten tablets from a pack

@@ -9,7 +9,7 @@ const config = require('../../config/env');
 const { validate } = require('../../middleware/validate');
 const { authenticate, authorize } = require('../../middleware/authenticate');
 const { AppError } = require('../../utils/AppError');
-const { UNITS } = require('../medicines/medicines.service');
+const { UNITS, CONTENT_UNITS } = require('../medicines/medicines.service');
 
 // ── Upload ────────────────────────────────────────────────
 //
@@ -131,7 +131,45 @@ const quickAddRules = [
   body('default_selling_price').isFloat({ min: 0.01 }).withMessage('Selling price must be greater than 0'),
   body('low_stock_threshold').optional().isInt({ min: 0 }),
   body('hsn_code').optional({ nullable: true }).trim().isLength({ max: 20 }),
+  body('pack_content_quantity')
+    .optional({ nullable: true })
+    .custom((val, { req }) => {
+      const hasQty = val !== null && val !== undefined && val !== '';
+      const hasUnit = req.body.pack_content_unit !== null && req.body.pack_content_unit !== undefined && req.body.pack_content_unit !== '';
+      if (!hasQty && hasUnit) {
+        throw new Error('Pack content quantity is required when pack content unit is set');
+      }
+      if (hasQty) {
+        const n = Number(val);
+        if (!Number.isInteger(n) || n < 1 || n > 1000) {
+          throw new Error('Pack contents must be an integer between 1 and 1000');
+        }
+        if (!hasUnit) {
+          throw new Error('Pack content unit is required when pack content quantity is set');
+        }
+      }
+      return true;
+    }),
+  body('pack_content_unit')
+    .optional({ nullable: true })
+    .custom((val, { req }) => {
+      const hasUnit = val !== null && val !== undefined && val !== '';
+      const hasQty = req.body.pack_content_quantity !== null && req.body.pack_content_quantity !== undefined && req.body.pack_content_quantity !== '';
+      if (!hasUnit && hasQty) {
+        throw new Error('Pack content unit is required when pack content quantity is set');
+      }
+      if (hasUnit) {
+        if (!CONTENT_UNITS.includes(val)) {
+          throw new Error(`Pack content unit must be one of: ${CONTENT_UNITS.join(', ')}`);
+        }
+        if (!hasQty) {
+          throw new Error('Pack content quantity is required when pack content unit is set');
+        }
+      }
+      return true;
+    }),
 ];
+
 
 // ── Routes ────────────────────────────────────────────────
 //

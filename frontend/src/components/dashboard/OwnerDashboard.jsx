@@ -12,8 +12,8 @@ import Skeleton, {
   SkeletonRegion, SkeletonRows, SkeletonTile, SkeletonChart, SkeletonCard,
 } from '../../ui/Skeleton';
 import { Money, Qty } from '../../domain/Money';
-import { StatTile, PaymentMixCard, RevenueTrendCard, PAYMENT_SERIES, deltaVs, shareOf } from '../../domain/charts';
-import { AlertIcon, ClockIcon, PillIcon, ReturnIcon, UsersIcon } from '../../ui/icons';
+import { StatTile, PaymentMixCard, RevenueTrendCard, TopMedicinesCard, PAYMENT_SERIES, deltaVs, shareOf } from '../../domain/charts';
+import { AlertIcon, CashIcon, ClockIcon, PillIcon, ReturnIcon, UpiIcon, UsersIcon } from '../../ui/icons';
 import StaffAttendanceCard from './StaffAttendanceCard';
 import StockRequisitionsCard from './StockRequisitionsCard';
 
@@ -21,6 +21,21 @@ import StockRequisitionsCard from './StockRequisitionsCard';
    one screen where the danger and warning ramps added in the token work earn
    their place: before them, "3 patients overdue for a refill" and "Today's
    sales" were rendered in variations of the same accent. */
+
+/* Marks for the payment tiles, keyed by mode so the map below stays a lookup
+   rather than a conditional. Deliberately NOT in domain/charts/series.js: that
+   map binds a mode to a chart SLOT and is consumed by three charts that draw
+   no icons, whereas this is one screen's decoration. A mode with no entry
+   simply renders no icon.
+
+   Cash is tinted with its own series colour, so the glyph, the sparkline under
+   it and its band in the mix bar are one colour — entity, not rank, the same
+   rule series.js states. UPI brings its own: it is a brand mark and arrives
+   already painted (see ui/icons.jsx), which is why nothing is passed here. */
+const PAYMENT_ICONS = {
+  cash: <CashIcon className="h-[18px] w-[18px] text-chart-1" />,
+  upi: <UpiIcon className="h-[18px] w-[18px]" />,
+};
 
 export default function OwnerDashboard() {
   const navigate = useNavigate();
@@ -81,9 +96,12 @@ export default function OwnerDashboard() {
               <SkeletonRows count={3} leading />
               <SkeletonCard lines={2} />
             </div>
-            <div className="flex flex-col gap-s2">
-              <Skeleton className="h-5 w-1/3" />
-              {[0, 1, 2, 3].map((n) => <Skeleton key={n} className="h-target w-full rounded-pill" />)}
+            <div className="flex flex-col gap-s4">
+              <div className="flex flex-col gap-s2">
+                <Skeleton className="h-5 w-1/3" />
+                {[0, 1, 2, 3].map((n) => <Skeleton key={n} className="h-target w-full rounded-pill" />)}
+              </div>
+              <SkeletonChart height={240} />
             </div>
           </div>
         </SkeletonRegion>
@@ -101,6 +119,14 @@ export default function OwnerDashboard() {
     alerts.near_expiry?.length > 0 ||
     alerts.pending_customer_returns > 0 ||
     alerts.overdue_refills?.length > 0;
+
+  /* Running low and Expiring soon sit side by side — but only when both are
+     there. A two-column grid holds its second column open whether or not
+     anything is in it, so a pharmacy with nothing near expiry got a
+     half-width card and a hole beside it, which reads as something that
+     failed to load rather than as good news. */
+  const stockAlertCount =
+    (alerts.low_stock?.length > 0 ? 1 : 0) + (alerts.near_expiry?.length > 0 ? 1 : 0);
 
   return (
     <div>
@@ -128,6 +154,7 @@ export default function OwnerDashboard() {
             <StatTile
               key={s.mode}
               label={`${s.name} today`}
+              icon={PAYMENT_ICONS[s.mode]}
               sub={share == null ? undefined : `${Math.round(share)}% of sales`}
               trend={trendRows}
               trendKey={s.key}
@@ -234,7 +261,7 @@ export default function OwnerDashboard() {
                   </Card>
                 )}
 
-                <div className="grid gap-s3 sm:grid-cols-2">
+                <div className={cn('grid gap-s3', stockAlertCount === 2 && 'sm:grid-cols-2')}>
                   {alerts.low_stock?.length > 0 && (
                     <Card className="overflow-hidden border border-border bg-card shadow-1">
                       <div className="flex items-center justify-between gap-s2 border-b border-border px-s4 py-s3">
@@ -408,32 +435,20 @@ export default function OwnerDashboard() {
             </section>
           )}
 
-          {top_medicines?.length > 0 && (
-            <section aria-labelledby="top-medicines">
-              <h2 id="top-medicines" className="mb-s2 text-sm font-bold text-foreground">Top medicines this month</h2>
-              <Card>
-                <ul className="divide-y divide-border">
-                  {top_medicines.map((m, idx) => (
-                    <li key={m.medicine_id} className="flex min-h-target items-center gap-s3 px-s3 py-s2">
-                      <span className="tabular w-6 shrink-0 text-base text-muted-foreground">{idx + 1}</span>
-                      <span className="min-w-0 flex-1 truncate text-base text-foreground">{m.name}</span>
-                      <Qty value={m.total_qty} unit={m.unit} />
-                    </li>
-                  ))}
-                </ul>
-              </Card>
-            </section>
-          )}
         </div>
 
-        <aside aria-labelledby="quick-actions">
-          <h2 id="quick-actions" className="mb-s2 text-sm font-bold text-foreground">Quick actions</h2>
-          <div className="flex flex-col gap-s2">
-            <Button variant="primary" size="block" onClick={() => navigate('/billing/new')}>New bill</Button>
-            <Button variant="secondary" size="block" onClick={() => navigate('/inventory')}>View inventory</Button>
-            <Button variant="secondary" size="block" onClick={() => navigate('/reports')}>Reports</Button>
-            <Button variant="secondary" size="block" onClick={() => navigate('/customers')}>Customers</Button>
+        <aside aria-labelledby="quick-actions" className="flex flex-col gap-s4">
+          <div>
+            <h2 id="quick-actions" className="mb-s2 text-sm font-bold text-foreground">Quick actions</h2>
+            <div className="flex flex-col gap-s2">
+              <Button variant="primary" size="block" onClick={() => navigate('/billing/new')}>New bill</Button>
+              <Button variant="secondary" size="block" onClick={() => navigate('/inventory')}>View inventory</Button>
+              <Button variant="secondary" size="block" onClick={() => navigate('/reports')}>Reports</Button>
+              <Button variant="secondary" size="block" onClick={() => navigate('/customers')}>Customers</Button>
+            </div>
           </div>
+
+          <TopMedicinesCard medicines={top_medicines} limit={5} />
         </aside>
       </div>
     </div>

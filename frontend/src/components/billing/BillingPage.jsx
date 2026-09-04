@@ -15,7 +15,7 @@ import { Money, Qty } from '../../domain/Money';
 import { stockStatus } from '../../domain/stock';
 import {
   supportsLooseSale, packContents, packLabel, availabilityLabel,
-  looseAvailable, lineTotals, wholePackHint, contentNoun, sealedNoun,
+  looseAvailable, lineTotals, wholePackHint, contentNoun, sealedNoun, dispensedLabel,
 } from '../../domain/pack';
 import { PillIcon } from '../../ui/icons';
 
@@ -41,6 +41,14 @@ import { PillIcon } from '../../ui/icons';
    for a medicine whose pack contents are recorded and countable — a 100ML
    syrup and a 30GM tube get the single Quantity box they always had, because
    offering to sell one millilitre of anything is not a thing a pharmacy does.
+
+   Submitting goes through a summary dialog first, for Owner and Staff alike.
+   Bills are immutable once created — a mistake is not editable, it has to be
+   unwound through a Customer Return (module 12) — so the one moment worth
+   spending a tap on is the moment before that becomes true. The dialog is
+   read-only on purpose: it restates the cart rather than offering a last
+   chance to change it, because a field that edits here is a field whose
+   validation lives in two places.
    ═══════════════════════════════════════════════════════════════════════════ */
 
 const PAYMENT_MODES = [
@@ -86,6 +94,7 @@ export default function BillingPage() {
   const [loading, setLoading] = useState(false);
   const [lastBill, setLastBill] = useState(null);
   const [adherenceWarnings, setAdherenceWarnings] = useState(null);
+  const [confirming, setConfirming] = useState(false);
 
   const addItem = (medicine) => {
     setItems((current) => {
@@ -207,13 +216,22 @@ export default function BillingPage() {
       }
     } finally {
       setLoading(false);
+      /* Closed on every outcome, not just success. On the adherence branch the
+         warnings are set in the catch above and both updates land in the same
+         batch, so the summary gives way to the adherence prompt rather than
+         stacking two modals; on a plain failure it clears so the toast naming
+         the problem is not behind an overlay. */
+      setConfirming(false);
     }
   };
 
+  /* Submitting opens the summary; the summary submits. Everything that would
+     block the sale has already been checked here, so the dialog never has to
+     report a problem — it only has to show what is about to happen. */
   const handleSubmit = (event) => {
     event.preventDefault();
     if (blockingReason) return;
-    submitBill();
+    setConfirming(true);
   };
 
   return (
@@ -349,6 +367,18 @@ export default function BillingPage() {
       </form>
 
       {lastBill && <LastBillReceipt bill={lastBill} onDismiss={() => setLastBill(null)} />}
+
+      <BillSummaryDialog
+        open={confirming}
+        items={items}
+        form={form}
+        subtotal={subtotal}
+        discount={discount}
+        total={total}
+        loading={loading}
+        onCancel={() => setConfirming(false)}
+        onConfirm={() => submitBill()}
+      />
 
       <AdherenceDialog
         warnings={adherenceWarnings}
@@ -507,9 +537,7 @@ function LineItem({ item, index, onQtyChange, onLooseQtyChange, onRemove, onSwap
           against what they are about to cut off a strip. */}
       {splittable && (qty > 0 || looseQty > 0) && (
         <p className="text-base text-muted-foreground">
-          Dispensing {qty > 0 && `${qty} ${sealedNoun(item.unit, { plural: qty !== 1 })}`}
-          {qty > 0 && looseQty > 0 && ' + '}
-          {looseQty > 0 && `${looseQty} ${contentNoun(item.pack_content_unit, { plural: looseQty !== 1 })}`}
+          Dispensing {dispensedLabel(item)}
           {totals.contentUnits ? ` · ${totals.contentUnits} ${looseNoun} in total` : null}
         </p>
       )}
@@ -629,6 +657,103 @@ function LastBillReceipt({ bill, onDismiss }) {
         </p>
       </CardBody>
     </Card>
+  );
+}
+
+/**
+ * The last screen before an immutable bill exists.
+ *
+ * Read-only by design. It restates the cart in the words the counter will read
+ * back to the customer — who it is for, what is being handed over in BOTH
+ * denominations, what is being charged and how it is being paid — and offers
+ * exactly two ways out: go back and change it, or commit.
+ *
+ * It is not gated on role. Owner and Staff both ring up sales, both create the
+ * same immutable record, and a confirmation that only one of them sees is a
+ * check the other cannot fail.
+ */
+function BillSummaryDialog({ open, items, form, subtotal, discount, total, loading, onCancel, onConfirm }) {
+  const customerName = form.customer_name.trim() || 'Walk-in Customer';
+  const phone = form.customer_phone.trim();
+  const notes = form.notes.trim();
+  const paymentLabel = PAYMENT_MODES.find((m) => m.value === form.payment_mode)?.label || form.payment_mode;
+
+  return (
+    /* Dismissal is withheld while the request is in flight, the same way
+       ConfirmDialog withholds it — closing mid-POST would leave the cashier on
+       an empty-looking cart with a sale still landing behind it. */
+    <Dialog open={open} onOpenChange={loading ? undefined : (next) => { if (!next) onCancel(); }}>
+      <DialogContent>
+        <DialogHeader
+          title="Check this bill before completing"
+          description="A bill can't be edited once it's created — a correction has to go through a customer return."
+        />
+        <DialogBody className="flex flex-col gap-s4">
+          <section>
+            <h3 className="text-base font-bold text-foreground">{customerName}</h3>
+            <p className="text-base text-muted-foreground">
+              {phone ? `${phone} · ` : ''}Paying by {paymentLabel}
+            </p>
+          </section>
+
+          <section>
+            <h3 className="mb-s2 text-base font-bold text-foreground">
+              Dispensing · {plural(items.length, 'item')}
+            </h3>
+            <ul className="flex flex-col gap-s2">
+              {items.map((item) => (
+                <li key={item.medicine_id} className="flex items-baseline justify-between gap-s3">
+                  <span className="min-w-0">
+                    <span className="text-base text-foreground">{item.name}</span>
+                    {/* The denomination is the whole point of this screen: "2"
+                        meaning two tablets and "2" meaning two strips differ
+                        tenfold in what leaves the shelf, and this is the last
+                        place anyone can catch it. */}
+                    <span className="block text-base text-muted-foreground">{dispensedLabel(item)}</span>
+                  </span>
+                  <Money value={lineTotals(item).total} />
+                </li>
+              ))}
+            </ul>
+          </section>
+
+          {notes && (
+            <section>
+              <h3 className="text-base font-bold text-foreground">Notes</h3>
+              <p className="text-base text-muted-foreground">{notes}</p>
+            </section>
+          )}
+
+          <section className="flex flex-col gap-s2 border-t border-border pt-s3">
+            <div className="flex items-baseline justify-between gap-s3">
+              <span className="text-base text-muted-foreground">Subtotal</span>
+              <Money value={subtotal} />
+            </div>
+            {discount > 0 && (
+              <div className="flex items-baseline justify-between gap-s3">
+                <span className="text-base text-muted-foreground">Discount</span>
+                <Money value={-discount} tone="ok" />
+              </div>
+            )}
+            <div className="flex items-baseline justify-between gap-s3">
+              <span className="text-sm font-bold text-foreground">Total</span>
+              <Money value={total} className="text-md" />
+            </div>
+          </section>
+        </DialogBody>
+        <DialogFooter>
+          <DialogClose asChild>
+            <Button variant="secondary" disabled={loading}>Go back and edit</Button>
+          </DialogClose>
+          {/* §5: the confirming button repeats the commitment, it does not say
+              "OK". The figure is here so the amount is on the button the
+              cashier's finger is already on. */}
+          <Button variant="primary" loading={loading} onClick={onConfirm}>
+            {`Confirm sale — ${money(total)}`}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

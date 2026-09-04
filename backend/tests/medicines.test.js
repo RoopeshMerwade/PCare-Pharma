@@ -120,12 +120,119 @@ describe('POST /api/v1/medicines', () => {
   });
 
   test('TC-MED-12: Duplicate name+manufacturer returns 409 DUPLICATE_MEDICINE', async () => {
-    const payload = newMed({ name: 'Dup Med Unique', manufacturer: 'Dup Pharma' });
+    const payload = newMed({ name: `Dup Med ${Date.now()}`, manufacturer: 'Dup Pharma' });
     await request(app).post('/api/v1/medicines').set(oa()).send(payload);
     const res = await request(app).post('/api/v1/medicines').set(oa()).send(payload);
     expect(res.status).toBe(409);
     expect(res.body.error).toBe('DUPLICATE_MEDICINE');
   });
+
+  test('TC-MED-12a: 200GM and 500GM pack variants of same medicine and manufacturer can coexist', async () => {
+    const uniqueBase = `Ragi Malt ${Date.now()}`;
+    const v200 = newMed({
+      name: uniqueBase,
+      manufacturer: 'Manna Foods',
+      unit: 'packs',
+      pack_content_quantity: 200,
+      pack_content_unit: 'GM',
+    });
+    const v500 = newMed({
+      name: uniqueBase,
+      manufacturer: 'Manna Foods',
+      unit: 'packs',
+      pack_content_quantity: 500,
+      pack_content_unit: 'GM',
+    });
+
+    const res1 = await request(app).post('/api/v1/medicines').set(oa()).send(v200);
+    expect(res1.status).toBe(201);
+
+    const res2 = await request(app).post('/api/v1/medicines').set(oa()).send(v500);
+    expect(res2.status).toBe(201);
+  });
+
+  test('TC-MED-12b: Exact same variant (same name, mfr, pack_content_quantity, pack_content_unit) is rejected as duplicate', async () => {
+    const uniqueBase = `Ragi Malt Dup ${Date.now()}`;
+    const v200 = newMed({
+      name: uniqueBase,
+      manufacturer: 'Manna Foods',
+      unit: 'packs',
+      pack_content_quantity: 200,
+      pack_content_unit: 'GM',
+    });
+
+    const res1 = await request(app).post('/api/v1/medicines').set(oa()).send(v200);
+    expect(res1.status).toBe(201);
+
+    const res2 = await request(app).post('/api/v1/medicines').set(oa()).send(v200);
+    expect(res2.status).toBe(409);
+    expect(res2.body.error).toBe('DUPLICATE_MEDICINE');
+  });
+
+  test('TC-MED-12c: Same pack variant from different manufacturer is allowed', async () => {
+    const uniqueBase = `Ragi Malt DiffMfr ${Date.now()}`;
+    const v200MfrA = newMed({
+      name: uniqueBase,
+      manufacturer: 'Mfr Alpha',
+      unit: 'packs',
+      pack_content_quantity: 200,
+      pack_content_unit: 'GM',
+    });
+    const v200MfrB = newMed({
+      name: uniqueBase,
+      manufacturer: 'Mfr Beta',
+      unit: 'packs',
+      pack_content_quantity: 200,
+      pack_content_unit: 'GM',
+    });
+
+    const res1 = await request(app).post('/api/v1/medicines').set(oa()).send(v200MfrA);
+    expect(res1.status).toBe(201);
+
+    const res2 = await request(app).post('/api/v1/medicines').set(oa()).send(v200MfrB);
+    expect(res2.status).toBe(201);
+  });
+
+  test('TC-MED-12d: Different content units (GM vs ML) with same quantity are distinct and allowed', async () => {
+    const uniqueBase = `Electrolyte ${Date.now()}`;
+    const vGm = newMed({
+      name: uniqueBase,
+      manufacturer: 'Health Pharma',
+      unit: 'packs',
+      pack_content_quantity: 200,
+      pack_content_unit: 'GM',
+    });
+    const vMl = newMed({
+      name: uniqueBase,
+      manufacturer: 'Health Pharma',
+      unit: 'bottles',
+      pack_content_quantity: 200,
+      pack_content_unit: 'ML',
+    });
+
+    const res1 = await request(app).post('/api/v1/medicines').set(oa()).send(vGm);
+    expect(res1.status).toBe(201);
+
+    const res2 = await request(app).post('/api/v1/medicines').set(oa()).send(vMl);
+    expect(res2.status).toBe(201);
+  });
+
+  test('TC-MED-12e: Medicines without pack contents continue to enforce name+manufacturer uniqueness', async () => {
+    const uniqueBase = `Legacy Med ${Date.now()}`;
+    const m1 = newMed({
+      name: uniqueBase,
+      manufacturer: 'Legacy Pharma',
+      unit: 'strips',
+    });
+
+    const res1 = await request(app).post('/api/v1/medicines').set(oa()).send(m1);
+    expect(res1.status).toBe(201);
+
+    const res2 = await request(app).post('/api/v1/medicines').set(oa()).send(m1);
+    expect(res2.status).toBe(409);
+    expect(res2.body.error).toBe('DUPLICATE_MEDICINE');
+  });
+
 
   test('TC-MED-13: Missing required fields returns 422', async () => {
     const res = await request(app).post('/api/v1/medicines').set(oa()).send({ name: 'No Category' });

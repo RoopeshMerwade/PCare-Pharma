@@ -204,10 +204,10 @@ export function inferUnit(line) {
   // 1. Direct sale_unit match from extraction
   const saleUnit = String(line.sale_unit || '').toUpperCase().trim();
   if (saleUnit.includes('STRIP')) return 'strips';
-  if (saleUnit.includes('BOTTLE') || saleUnit.includes('SYRUP')) return 'bottles';
+  if (saleUnit.includes('BOTTLE') || saleUnit.includes('SYRUP') || saleUnit.includes('JAR') || saleUnit.includes('TIN')) return 'bottles';
   if (saleUnit.includes('TUBE') || saleUnit.includes('OINTMENT') || saleUnit.includes('CREAM')) return 'tubes';
   if (saleUnit.includes('VIAL') || saleUnit.includes('AMP') || saleUnit.includes('INJ')) return 'vials';
-  if (saleUnit.includes('PACK') || saleUnit.includes('BOX') || saleUnit.includes('KIT')) return 'packs';
+  if (saleUnit.includes('PACK') || saleUnit.includes('BOX') || saleUnit.includes('KIT') || saleUnit.includes('POUCH') || saleUnit.includes('BAG') || saleUnit.includes('CARTON')) return 'packs';
   if (saleUnit.includes('PIECE') || saleUnit.includes('PCS')) return 'pcs';
 
   const desc = String(line.raw_description || '').toUpperCase();
@@ -215,40 +215,132 @@ export function inferUnit(line) {
   const text = `${desc} ${pack}`;
 
   // 2. Specific product forms & containers
-  if (/\b(INJ|INJECTION|VIAL|VIALS|AMP|AMPOULE|AMPOULES|IV|INFUSION)\b/.test(text)) {
+  if (/\b(INJ|INJECTION|VIAL|VIALS|AMP|AMPOULE|AMPOULES|IV|INFUSION|PEN|CARTRIDGE)\b/.test(text)) {
     return 'vials';
   }
 
-  if (/\b(SOAP|DEVICE|BANDAGE|COTTON|GAUZE|MASK|GLOVES|NEEDLE|SYRINGE|PIECE|PCS)\b/.test(text)) {
+  if (/\b(SOAP|DEVICE|BANDAGE|COTTON|GAUZE|MASK|GLOVES|NEEDLE|SYRINGE|THERMOMETER|WIPES|BRUSH|CONDOM|DIAPER|PAD|PADS|PIECE|PCS)\b/.test(text)) {
     return 'pcs';
   }
 
-  if (/\b(INHALER|ROTACAP|RESPULES|SPRAY|SACHET|SACHETS|KIT|COMBIPACK|PACK|PATCH)\b/.test(text)) {
-    return 'packs';
-  }
-
-  if (/\b(OINT|OINTMENT|CREAM|GEL|JELLY|PASTE)\b/.test(text)) {
+  if (/\b(OINT|OINTMENT|CREAM|GEL|JELLY|PASTE|BALM|LINIMENT|EMULGEL)\b/.test(text)) {
     return 'tubes';
   }
 
-  if (/\b(TAB|TABS|TABLET|TABLETS|CAP|CAPS|CAPSULE|CAPSULES|STRIP|STRIPS)\b/.test(text) || /^\d+('S|S|T|C)$/.test(pack)) {
+  if (/\b(TAB|TABS|TABLET|TABLETS|CAP|CAPS|CAPSULE|CAPSULES|STRIP|STRIPS|BLISTER)\b/.test(text) || /^\d+('S|S|T|C)$/.test(pack)) {
     return 'strips';
   }
 
-  if (/\b(SYRUP|SUSP|SUSPENSION|SOL|SOLUTION|LOTION|ELIXIR|DROPS|DROP|EYE DROP|EAR DROP|NASAL DROP|TONIC|POWDER|DUSTING POWDER)\b/.test(text)) {
+  if (/\b(SYRUP|SUSP|SUSPENSION|SOL|SOLUTION|LOTION|ELIXIR|DROPS|DROP|EYE DROP|EAR DROP|NASAL DROP|TONIC|DUSTING POWDER|JAR|TIN|CAN)\b/.test(text)) {
     return 'bottles';
+  }
+
+  if (/\b(MALT|RAGI|FOOD|CEREAL|DRINK|HEALTH DRINK|NUTRITION|SUPPLEMENT|GRANULES|SACHET|SACHETS|POUCH|BOX|BAG|CARTON|INHALER|ROTACAP|RESPULES|SPRAY|KIT|COMBIPACK|PACK|PATCH)\b/.test(text)) {
+    return 'packs';
   }
 
   // 3. Packaging suffixes
-  if (/\b\d+(\.\d+)?\s*ML\b/.test(pack)) {
+  if (/\b\d+(\.\d+)?\s*(ML|L|LTR|LTRS)\b/.test(pack)) {
     return 'bottles';
   }
 
-  if (/\b\d+(\.\d+)?\s*(GM|GMS|G)\b/.test(pack)) {
-    if (/\bPOWDER\b/.test(desc)) return 'bottles';
+  if (/\b\d+(\.\d+)?\s*(GM|GMS|G|KG)\b/.test(pack)) {
+    if (/\b(POWDER|DUSTING|JAR|TIN)\b/.test(text)) return 'bottles';
+    if (/\b(MALT|FOOD|DRINK|CEREAL|NUTRITION|GRANULES|SACHET|REFILL|PACK|BOX)\b/.test(text)) return 'packs';
+    const num = parseFloat(pack);
+    if (Number.isFinite(num) && num >= 100) return 'packs';
     return 'tubes';
   }
 
   // Default fallback
   return 'strips';
 }
+
+/**
+ * Resolves the dispensing unit representation for display and form prefilling.
+ * Distinguishes whether the unit was explicitly extracted (line.sale_unit) or inferred.
+ */
+export function resolveDispensingUnit(line) {
+  const inferred = inferUnit(line);
+  if (line?.sale_unit) {
+    return {
+      unit: inferred,
+      label: String(line.sale_unit).toUpperCase(),
+      isExplicit: true,
+    };
+  }
+  return {
+    unit: inferred,
+    label: inferred.toUpperCase().replace(/S$/, ''),
+    isExplicit: false,
+  };
+}
+
+/**
+ * Formats what a single pack holds (e.g. "10 tablets", "100 ML", "7 × 2 ML").
+ * Returns null if no pack content is detected or confidently available.
+ */
+export function formatPackContent(line) {
+  if (!line) return null;
+
+  // Nested pack: e.g. 7X2ML -> 7 × 2 ML
+  if (line.sub_pack_quantity && line.content_quantity && line.content_unit) {
+    return `${line.sub_pack_quantity} × ${line.content_quantity} ${line.content_unit}`;
+  }
+
+  if (line.content_quantity && line.content_unit) {
+    const qty = line.content_quantity;
+    const unit = String(line.content_unit).toUpperCase();
+
+    if (unit === 'PIECE') {
+      const desc = String(line.raw_description || '').toUpperCase();
+      if (/\b(TAB|TABS|TABLET|TABLETS)\b/.test(desc)) return `${qty} tablets`;
+      if (/\b(CAP|CAPS|CAPSULE|CAPSULES)\b/.test(desc)) return `${qty} capsules`;
+      return `${qty} pieces`;
+    }
+    if (unit === 'TABLET') return `${qty} tablets`;
+    if (unit === 'CAPSULE') return `${qty} capsules`;
+    if (unit === 'DOSE') return `${qty} doses`;
+
+    return `${qty} ${unit}`;
+  }
+
+  return null;
+}
+
+/**
+ * Infers initial values for catalogue pack content configuration (pack_content_quantity & pack_content_unit).
+ * Returns { quantity: string, unit: string } suitable for Form state.
+ */
+export function inferPackContents(line) {
+  if (!line || line.content_quantity == null) return { quantity: '', unit: '' };
+
+  const qtyNum = Number(line.content_quantity);
+  if (!Number.isFinite(qtyNum) || qtyNum < 1 || qtyNum > 1000) {
+    return { quantity: '', unit: '' };
+  }
+
+  let unit = String(line.content_unit || '').toUpperCase();
+  if (unit === 'PIECE') {
+    const desc = String(line.raw_description || '').toUpperCase();
+    if (/\b(TAB|TABS|TABLET|TABLETS)\b/.test(desc)) unit = 'TABLET';
+    else if (/\b(CAP|CAPS|CAPSULE|CAPSULES)\b/.test(desc)) unit = 'CAPSULE';
+    else unit = 'PIECE';
+  }
+
+  const VALID_CONTENT_UNITS = ['TABLET', 'CAPSULE', 'PIECE', 'MCG', 'MG', 'KG', 'GM', 'ML', 'L', 'DOSE', 'IU'];
+  if (!VALID_CONTENT_UNITS.includes(unit)) {
+    return { quantity: '', unit: '' };
+  }
+
+  // A pack of 1 countable unit is already a single unit; leave blank to avoid validation error
+  if (qtyNum === 1 && ['TABLET', 'CAPSULE', 'PIECE'].includes(unit)) {
+    return { quantity: '', unit: '' };
+  }
+
+  return {
+    quantity: String(qtyNum),
+    unit,
+  };
+}
+

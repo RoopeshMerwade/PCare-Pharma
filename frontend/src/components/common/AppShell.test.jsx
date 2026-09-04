@@ -118,6 +118,48 @@ describe('AppShell — §3.6 navigation', () => {
   });
 });
 
+describe('AppShell — account menu', () => {
+  it('carries identity and sign-out in the header, not the rail', async () => {
+    renderShell(OWNER);
+
+    // Log out is behind the menu, never a bare button beside the bell — one
+    // stray thumb at the counter must not end the session.
+    expect(screen.queryByRole('button', { name: /log out/i })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: /Account: Roopesh Gowda/ }));
+    expect(screen.getByRole('menuitem', { name: /log out/i })).toBeInTheDocument();
+  });
+
+  it('logs out from the menu item', async () => {
+    renderShell(OWNER);
+    await userEvent.click(screen.getByRole('button', { name: /Account: Roopesh Gowda/ }));
+    await userEvent.click(screen.getByRole('menuitem', { name: /log out/i }));
+    expect(mockAuth.current.logout).toHaveBeenCalled();
+  });
+
+  it('names the account button for staff too, where the label is hidden below lg', () => {
+    renderShell(STAFF);
+    // Below lg the trigger is an avatar with two initials in it, so the whole
+    // identity has to survive in the accessible name (A10).
+    expect(screen.getByRole('button', { name: /Account: Priya Nair/ })).toBeInTheDocument();
+  });
+});
+
+describe('AppShell — pinned Settings', () => {
+  it('sits in its own landmark at the foot of the rail, outside the scrolling groups', () => {
+    renderShell(OWNER);
+    const footer = screen.getByRole('navigation', { name: 'Settings' });
+    expect(footer).toContainElement(screen.getByRole('link', { name: 'Settings' }));
+    // Not duplicated back into the System group it was moved out of.
+    expect(screen.getAllByRole('link', { name: 'Settings' })).toHaveLength(1);
+  });
+
+  it('is absent entirely for Staff, landmark included', () => {
+    renderShell(STAFF);
+    expect(screen.queryByRole('navigation', { name: 'Settings' })).not.toBeInTheDocument();
+  });
+});
+
 describe('AppShell — notification bell', () => {
   it('reaches Staff too, not just Owner', () => {
     renderShell(STAFF, { unreadCount: 2 });

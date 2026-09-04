@@ -19,4 +19,5 @@ export { default as PaymentMixCard } from './PaymentMixCard';
 export { default as PaymentTrendCard } from './PaymentTrendCard';
 export { default as StockHealthCard } from './StockHealthCard';
 export { default as MarginLeadersCard } from './MarginLeadersCard';
+export { default as TopMedicinesCard } from './TopMedicinesCard';
 export { default as PurchaseFlowCard } from './PurchaseFlowCard';
