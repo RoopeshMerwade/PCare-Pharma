@@ -39,11 +39,18 @@ const WARNING_LABELS = {
   BATCH_EXISTS: 'Batch already on shelf',
   PACK_UNPARSEABLE: 'Pack not understood',
 
+  // ── Line-level, advisory (tax). Advisory without exception: tax takes no
+  // part in what becomes stock, so a tax figure disagreeing with itself cannot
+  // make an import wrong — only a later GST reconciliation.
+  LINE_TAX_MISMATCH: 'Tax disagrees',
+  GST_SPLIT_INCONSISTENT: 'GST split looks wrong',
+
   // ── Document-level, blocking
   SUPPLIER_UNRESOLVED: 'Distributor not matched',
   MISSING_INVOICE_NO: 'No invoice number',
   DUPLICATE_INVOICE: 'Already imported',
   NO_LINE_ITEMS: 'No lines read',
+  INVOICE_TYPE_NOT_IMPORTABLE: 'Not a tax invoice',
 
   // ── Document-level, advisory
   MISSING_INVOICE_DATE: 'No invoice date',
@@ -51,6 +58,10 @@ const WARNING_LABELS = {
   TOTALS_MISMATCH: 'Totals disagree',
   LINES_TOTAL_MISMATCH: 'Lines do not sum',
   ITEM_COUNT_MISMATCH: 'Line count disagrees',
+  GST_TOTAL_UNREAD: 'No GST total read',
+  TAX_SUMMARY_MISMATCH: 'Tax summary disagrees',
+  TAX_RATE_UNRESOLVED: 'GST rate missing',
+  NET_PAYABLE_MISMATCH: 'Payable disagrees',
 };
 
 /** Short label for a warning code. Never returns empty. */

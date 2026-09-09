@@ -46,7 +46,9 @@ export function NotificationsPage() {
   const markRead = async (id) => {
     setNotifications((ns) => ns.map((n) => (n.id === id ? { ...n, is_read: true } : n)));
     try {
-      await api.patch(`/notifications/${id}/read`);
+      // Encoded because a derived alert's id is an `alert:TYPE:entity:tier` key,
+      // not a UUID. Colons are legal in a path segment, but encoding is correct.
+      await api.patch(`/notifications/${encodeURIComponent(id)}/read`);
     } catch (err) {
       // Put it back — pretending it worked would hide a real alert.
       setNotifications((ns) => ns.map((n) => (n.id === id ? { ...n, is_read: false } : n)));
@@ -118,7 +120,11 @@ export function NotificationsPage() {
                       {!n.is_read && <Badge tone="flag">Unread</Badge>}
                     </span>
                     <span className="mt-s1 block text-base text-muted-foreground">{n.message}</span>
-                    <span className="mt-s1 block text-base text-muted-foreground">{dateTime(n.created_at)}</span>
+                    {/* Derived alerts say their condition ("Expires in 12 days")
+                        rather than a timestamp — see NotificationBell. */}
+                    <span className="mt-s1 block text-base text-muted-foreground">
+                      {n.context || dateTime(n.created_at)}
+                    </span>
                   </span>
                 </button>
               </li>

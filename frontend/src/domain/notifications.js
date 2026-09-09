@@ -5,11 +5,17 @@ import { BellIcon, BoxIcon, ClockIcon, ReturnIcon, AlertIcon, UsersIcon, Clipboa
    full /notifications page.
 
    Previously the type→icon map lived inside SettingsPages.jsx, which meant the
-   bell would have had to duplicate it. It had also drifted from the backend:
-   `notifications.service.js#generateAlerts` raises REFILL_OVERDUE, which the
-   map did not list, so overdue-refill alerts fell through to a generic bell
-   icon. Same failure mode StatusBadge exists to prevent — two screens
-   disagreeing about what a thing is.
+   bell would have had to duplicate it. It had also drifted from the backend, so
+   a type it did not list fell through to a generic bell icon. Same failure mode
+   StatusBadge exists to prevent — two screens disagreeing about what a thing is.
+
+   Two sources feed this table. Most types are EVENTS: stored rows written when
+   something happened (a staff arrival, a requisition decision). NEAR_EXPIRY and
+   LOW_STOCK are ALERTS: computed per request from expiry_summary and
+   medicines_with_stock, never stored, and silenced through
+   notification_dismissals rather than an is_read flag. Both arrive in the same
+   payload shape, so nothing here needs to know which is which — an alert simply
+   also carries `context` and `derived: true`.
 
    `to` is where the alert is actionable. Several of those routes are
    owner-only (App.jsx guards /expiry, /purchases, /supplier-returns with
@@ -20,12 +26,19 @@ import { BellIcon, BoxIcon, ClockIcon, ReturnIcon, AlertIcon, UsersIcon, Clipboa
    ═══════════════════════════════════════════════════════════════════════════ */
 
 const TYPES = {
+  /* Derived alert (Module 36), owner-only in the payload. The filtered
+     destination is the one OwnerDashboard's "Running low" card already links
+     to — landing on the unfiltered list would make the reader re-find the row
+     they were just told about. */
   LOW_STOCK: {
     icon: BoxIcon,
-    to: '/inventory',
+    to: '/inventory?stock=low',
     /* Wash tones mirror the Badge ramp: low stock is amber, never mint. */
     wash: 'bg-warning-wash text-warning-ink',
   },
+  /* Derived alert (Module 36). ownerOnly is now belt-and-braces: the server
+     never puts one in a staff payload, because expiry decisions are the
+     owner's and /expiry is authorize('owner'). */
   NEAR_EXPIRY: {
     icon: ClockIcon,
     to: '/expiry',
@@ -49,8 +62,11 @@ const TYPES = {
     ownerOnly: true,
     wash: 'bg-destructive-wash text-destructive-ink',
   },
-  /* Raised by generateAlerts for chronic-care patients who have not collected
-     a refill. A person, not a stock line — hence the different icon. */
+  /* Chronic-care patients who have not collected a refill. A person, not a
+     stock line — hence the different icon. Nothing raises this today: it was
+     one of the branches of the never-called generateAlerts, removed in Module
+     36. Kept here so it renders correctly if the derived framework is extended
+     to cover it, which is a builder function and a query. */
   REFILL_OVERDUE: {
     icon: UsersIcon,
     to: '/customers',

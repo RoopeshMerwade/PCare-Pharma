@@ -5,6 +5,9 @@ const svc = require('./reports.service');
 const { asyncHandler } = require('../../utils/asyncHandler');
 const { ApiResponse } = require('../../utils/ApiResponse');
 
+const { buildSalesReportWorkbook, exportSalesFilename } = require('./reports.export');
+const { logAudit } = require('../../utils/audit');
+
 const sales = asyncHandler(async (req, res) => {
   const report = await svc.getSalesReport({
     dateFrom: req.query.dateFrom,
@@ -12,6 +15,32 @@ const sales = asyncHandler(async (req, res) => {
     groupBy: req.query.groupBy || 'day',
   });
   return ApiResponse.success(res, { report });
+});
+
+const exportSales = asyncHandler(async (req, res) => {
+  const data = await svc.getSalesExportData({
+    dateFrom: req.query.dateFrom,
+    dateTo: req.query.dateTo,
+  });
+
+  const filename = exportSalesFilename(data.dateFrom, data.dateTo);
+
+  res.setHeader(
+    'Content-Disposition',
+    `attachment; filename="${filename}"; filename*=UTF-8''${encodeURIComponent(filename)}`
+  );
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+
+  logAudit(req.user.id, 'sales_report_exported', {
+    dateFrom: data.dateFrom,
+    dateTo: data.dateTo,
+    billCount: data.bills?.length || 0,
+  }, { ip: req.ip, userAgent: req.get('user-agent') });
+
+  const workbook = await buildSalesReportWorkbook(data);
+  await workbook.xlsx.write(res);
+  return res.end();
 });
 
 const margins = asyncHandler(async (req, res) => {
@@ -44,4 +73,4 @@ const top = asyncHandler(async (req, res) => {
   return ApiResponse.success(res, { medicines });
 });
 
-module.exports = { sales, margins, purchases, inventory, top };
+module.exports = { sales, exportSales, margins, purchases, inventory, top };

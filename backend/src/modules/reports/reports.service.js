@@ -140,4 +140,100 @@ async function getTopMedicines({ dateFrom, dateTo, limit = 10 } = {}) {
   return data;
 }
 
-module.exports = { getSalesReport, getMarginReport, getPurchaseReport, getInventoryReport, getTopMedicines };
+// ── SALES EXPORT DATA
+async function getSalesExportData({ dateFrom, dateTo } = {}) {
+  const from = dateFrom || getISTMonthStart();
+  const to   = dateTo   || getISTDateString();
+  const startTz = getISTStartOfDay(from);
+  const endTz   = getISTEndOfDay(to);
+
+  // 1. Pharmacy settings (for store name)
+  const { data: settingRow } = await supabase
+    .from('pharmacy_settings')
+    .select('value')
+    .eq('key', 'pharmacy_name')
+    .single();
+  const storeName = settingRow?.value || 'P. Care Pharma';
+
+  // 2. Daily summary rows from daily_sales_summary
+  const { data: dailyRows, error: dailyErr } = await supabase
+    .from('daily_sales_summary')
+    .select('*')
+    .gte('sale_date', from)
+    .lte('sale_date', to)
+    .order('sale_date', { ascending: true });
+
+  if (dailyErr) throw new AppError('Failed to generate sales export.', 500, 'DB_ERROR');
+
+  // 3. Bills in range from bills_with_totals
+  const { data: bills, error: billsErr } = await supabase
+    .from('bills_with_totals')
+    .select('*')
+    .gte('created_at', startTz)
+    .lte('created_at', endTz)
+    .order('created_at', { ascending: true });
+
+  if (billsErr) throw new AppError('Failed to fetch bills for export.', 500, 'DB_ERROR');
+
+  // 4. Line items joined with medicines & inventory_batches
+  const { data: items, error: itemsErr } = await supabase
+    .from('bill_items')
+    .select('id, bill_id, medicine_id, batch_id, qty, unit_price, mrp, created_at, medicines(name, manufacturer, hsn_code, unit), inventory_batches(batch_no, exp_date)')
+    .gte('created_at', startTz)
+    .lte('created_at', endTz)
+    .order('created_at', { ascending: true });
+
+  if (itemsErr) throw new AppError('Failed to fetch bill items for export.', 500, 'DB_ERROR');
+
+  const billMap = new Map();
+  const discountsByDate = {};
+  const unitsByBill = new Map();
+
+  (bills || []).forEach((b) => {
+    billMap.set(b.id, b);
+    const saleDate = getISTDateString(b.created_at);
+    discountsByDate[saleDate] = (discountsByDate[saleDate] || 0) + Number(b.discount_amount || 0);
+  });
+
+  const lineItems = (items || []).map((it) => {
+    const parentBill = billMap.get(it.bill_id);
+    const qty = Number(it.qty || 0);
+    unitsByBill.set(it.bill_id, (unitsByBill.get(it.bill_id) || 0) + qty);
+
+    return {
+      ...it,
+      bill_number: parentBill?.bill_number || '—',
+      customer_name: parentBill?.customer_name,
+      created_at: parentBill?.created_at || it.created_at,
+    };
+  });
+
+  // Attach units to bills
+  (bills || []).forEach((b) => {
+    b.total_units = unitsByBill.get(b.id) || b.item_count || 0;
+  });
+
+  // Attach discounts to dailyRows
+  (dailyRows || []).forEach((r) => {
+    r.discount_total = discountsByDate[r.sale_date] || 0;
+  });
+
+  return {
+    storeName,
+    dateFrom: from,
+    dateTo: to,
+    generatedAt: new Date().toISOString(),
+    dailyRows: dailyRows || [],
+    bills: bills || [],
+    lineItems,
+  };
+}
+
+module.exports = {
+  getSalesReport,
+  getMarginReport,
+  getPurchaseReport,
+  getInventoryReport,
+  getTopMedicines,
+  getSalesExportData,
+};

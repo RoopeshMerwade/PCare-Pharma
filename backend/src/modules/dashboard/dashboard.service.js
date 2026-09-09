@@ -85,8 +85,10 @@ async function getOwnerDashboard(ownerId) {
     supabase.from('supplier_returns').select('*', { count:'exact', head:true }).eq('status', 'draft'),
     // Top medicines
     getTopMedicines({ dateFrom: monthStart(), dateTo: today(), limit: 5 }),
-    // Unread notifications
-    getUnreadCount(ownerId),
+    // Unread notifications. Takes the user rather than an id since Module 36,
+    // because the count now includes derived expiry/low-stock alerts and those
+    // are owner-only. This is the owner dashboard, so the role is not a guess.
+    getUnreadCount({ id: ownerId, role: 'owner' }),
     // Overdue / early medication refills (chronic care — Module 21)
     getOverdueSchedules({ limit: 5 }),
     // Who is on the counter today (attendance — Module 26). Shipped in the

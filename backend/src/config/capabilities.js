@@ -19,6 +19,8 @@ const { supabase } = require('./supabase');
 const logger = require('../utils/logger');
 
 let looseUnitsPromise = null;
+let dismissalsPromise = null;
+let invoiceTaxPromise = null;
 
 /**
  * Whether schema-27-loose-units.sql has been applied.
@@ -60,9 +62,110 @@ function hasLooseUnits() {
   return looseUnitsPromise;
 }
 
+/**
+ * Whether schema-36-notification-dismissals.sql has been applied.
+ *
+ * Same reasoning as above, one layer out. Derived expiry and low-stock alerts
+ * cannot be silenced without somewhere to record the silence, so on an
+ * unmigrated database they are not offered at all and the bell behaves exactly
+ * as it did before Module 36 — stored events only. The alternative is worse
+ * than a missing feature: querying a table PostgREST does not know fails the
+ * whole request, which would take /notifications down and break the bell for
+ * the attendance and requisition events that do work.
+ *
+ * Fails closed, memoised on the promise, one probe per process — so the API
+ * must be restarted after applying the migration, exactly as Module 27 requires.
+ */
+function hasNotificationDismissals() {
+  if (dismissalsPromise) return dismissalsPromise;
+
+  dismissalsPromise = (async () => {
+    const { error } = await supabase
+      .from('notification_dismissals')
+      .select('alert_key')
+      .limit(1);
+
+    if (!error) return true;
+
+    // 42P01 = undefined_table, PGRST2xx = PostgREST's schema cache has no such
+    // table. Both mean the same thing here: not migrated yet.
+    if (error.code === '42P01' || error.code?.startsWith('PGRST')) {
+      logger.warn(
+        { code: error.code },
+        'notification_dismissals not found — running without derived expiry/low-stock alerts. ' +
+        'Apply backend/src/modules/notifications/schema-36-notification-dismissals.sql and restart to enable them.'
+      );
+      return false;
+    }
+
+    logger.warn({ err: error }, 'Could not determine dismissal support; assuming unavailable');
+    return false;
+  })();
+
+  return dismissalsPromise;
+}
+
+/**
+ * Whether schema-37-invoice-tax-detail.sql has been applied.
+ *
+ * Probes `invoice_type`, which only that migration creates. Same reasoning as
+ * the two above, but the failure it prevents is on a WRITE rather than a read,
+ * and that makes it sharper.
+ *
+ * `ingestInvoice` inserts the whole normalised header in one statement. Send a
+ * column PostgREST's schema cache does not know and it rejects the ENTIRE
+ * insert with PGRST204 — so on an unmigrated database every upload would fail,
+ * after paying for the storage write and the Gemini call. Not a degraded
+ * feature: no goods inward at all, on the only working goods-inward path.
+ *
+ * Where the migration is absent, the new fields are dropped before the write
+ * and Module 23 behaves exactly as it did before this migration existed. The
+ * document is still read, still reviewed, still imported; only the tax detail
+ * is not retained. That is a real loss and it is the right one to take —
+ * losing the tax block costs a GST reconciliation later, losing the insert
+ * costs the delivery standing at the counter now.
+ *
+ * Fails closed, memoised on the promise, one probe per process — so the API
+ * must be restarted after applying the migration, exactly as Modules 27 and 36
+ * require.
+ */
+function hasInvoiceTaxDetail() {
+  if (invoiceTaxPromise) return invoiceTaxPromise;
+
+  invoiceTaxPromise = (async () => {
+    const { error } = await supabase
+      .from('supplier_invoices')
+      .select('invoice_type')
+      .limit(1);
+
+    if (!error) return true;
+
+    if (error.code === '42703' || error.code?.startsWith('PGRST')) {
+      logger.warn(
+        { code: error.code },
+        'Invoice tax-detail columns not found — supplier invoices will be stored without tax, party or document detail. ' +
+        'Apply backend/src/modules/supplier-invoices/schema-37-invoice-tax-detail.sql and restart to enable them.'
+      );
+      return false;
+    }
+
+    logger.warn({ err: error }, 'Could not determine invoice tax-detail support; assuming unavailable');
+    return false;
+  })();
+
+  return invoiceTaxPromise;
+}
+
 /** Test seam — lets a suite assert both branches without a live database. */
 function __resetCapabilityCache() {
   looseUnitsPromise = null;
+  dismissalsPromise = null;
+  invoiceTaxPromise = null;
 }
 
-module.exports = { hasLooseUnits, __resetCapabilityCache };
+module.exports = {
+  hasLooseUnits,
+  hasNotificationDismissals,
+  hasInvoiceTaxDetail,
+  __resetCapabilityCache,
+};

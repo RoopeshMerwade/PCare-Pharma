@@ -210,3 +210,117 @@ test('reason over 300 chars -> 422', async () => {
   expect(r.status).toBe(422);
 });
 
+/* ── schema-37: tax, party and document detail ─────────────────────────────
+ *
+ * Same hermetic contract as everything above — a 422 means the route's
+ * validator rejected the body, and a 500 means it passed and reached the
+ * throwing Supabase stub. "Not 422" is therefore the assertion for a body that
+ * SHOULD be accepted; the service layer is covered by tests/unit/. */
+
+const patchInvoice = (body) => request(app).patch(`/api/v1/supplier-invoices/${NIL}`).send(body);
+const patchItem = (body) => request(app).patch(`/api/v1/supplier-invoices/${NIL}/items/${NIL}`).send(body);
+
+test('invoice_type accepts only the three document types', async () => {
+  for (const type of ['TAX_INVOICE', 'CREDIT_NOTE', 'DEBIT_NOTE']) {
+    expect((await patchInvoice({ invoice_type: type })).status).not.toBe(422);
+  }
+  expect((await patchInvoice({ invoice_type: 'CREDIT' })).status).toBe(422);
+  expect((await patchInvoice({ invoice_type: 'invoice' })).status).toBe(422);
+  // NOT NULL in the schema, so it cannot be cleared — there is no such thing
+  // as a document with no type.
+  expect((await patchInvoice({ invoice_type: null })).status).toBe(422);
+});
+
+test('payment_type is a separate axis and does not accept a document type', async () => {
+  for (const type of ['CASH', 'CREDIT']) {
+    expect((await patchInvoice({ payment_type: type })).status).not.toBe(422);
+  }
+  // The distinction this whole pair exists for: "CREDIT" is payment terms.
+  expect((await patchInvoice({ payment_type: 'CREDIT_NOTE' })).status).toBe(422);
+  expect((await patchInvoice({ payment_type: null })).status).not.toBe(422);
+});
+
+test('round_off and adjustment_amount accept negatives; other money does not', async () => {
+  // A round-off is negative more often than positive — see schema-37 §37.1.
+  expect((await patchInvoice({ round_off: -0.21 })).status).not.toBe(422);
+  expect((await patchInvoice({ adjustment_amount: -30 })).status).not.toBe(422);
+  // Everything else keeps the non-negative rule the rest of the schema uses.
+  expect((await patchInvoice({ subtotal: -1 })).status).toBe(422);
+  expect((await patchInvoice({ total_cgst: -1 })).status).toBe(422);
+  expect((await patchInvoice({ additional_amount: -1 })).status).toBe(422);
+});
+
+test('invoice_time accepts printed shapes and rejects nonsense', async () => {
+  expect((await patchInvoice({ invoice_time: '14:35' })).status).not.toBe(422);
+  expect((await patchInvoice({ invoice_time: '02:35 PM' })).status).not.toBe(422);
+  expect((await patchInvoice({ invoice_time: 'lunchtime' })).status).toBe(422);
+});
+
+test('the tax summary must be an array of distinct, valid rate bands', async () => {
+  const ok = await patchInvoice({
+    tax_summary: [
+      { tax_rate: 5, taxable_amount: 100, cgst_amount: 2.5, sgst_amount: 2.5 },
+      { tax_rate: 12, taxable_amount: 200, cgst_amount: 12, sgst_amount: 12 },
+      { tax_rate: 18, taxable_amount: 300, igst_amount: 54 },
+    ],
+  });
+  expect(ok.status).not.toBe(422);
+
+  // A band with no rate has no identity — the rate IS the key.
+  expect((await patchInvoice({ tax_summary: [{ taxable_amount: 100 }] })).status).toBe(422);
+  // Two bands at one rate would break the unique index AFTER the delete half
+  // of the replace had already run, so it is refused at the door.
+  expect((await patchInvoice({ tax_summary: [{ tax_rate: 12 }, { tax_rate: 12 }] })).status).toBe(422);
+  expect((await patchInvoice({ tax_summary: [{ tax_rate: 120 }] })).status).toBe(422);
+  expect((await patchInvoice({ tax_summary: [{ tax_rate: 12, taxable_amount: -5 }] })).status).toBe(422);
+  expect((await patchInvoice({ tax_summary: 'none' })).status).toBe(422);
+  // Zero is a real band — exempt goods.
+  expect((await patchInvoice({ tax_summary: [{ tax_rate: 0, taxable_amount: 500 }] })).status).not.toBe(422);
+});
+
+test('line tax components validate independently — CGST/SGST or IGST, never required together', async () => {
+  expect((await patchItem({ cgst_pct: 6, cgst_amount: 60, sgst_pct: 6, sgst_amount: 60 })).status).not.toBe(422);
+  expect((await patchItem({ igst_pct: 12, igst_amount: 120 })).status).not.toBe(422);
+  expect((await patchItem({ cess_pct: 1, cess_amount: 10 })).status).not.toBe(422);
+
+  expect((await patchItem({ cgst_pct: 300 })).status).toBe(422);
+  expect((await patchItem({ igst_amount: -1 })).status).toBe(422);
+  expect((await patchItem({ cess_pct: -2 })).status).toBe(422);
+});
+
+test('trade price, discount amount and HSN reach the service as their own fields', async () => {
+  // Three distinct prices on one line is legitimate, not a conflict to reject.
+  const r = await patchItem({
+    hsn_code: '30049099', trade_price: 24, printed_rate: 20.22, printed_mrp: 28.31,
+    discount_amount: 15.47, taxable_amount: 500.13, net_amount: 560.15,
+  });
+  expect(r.status).not.toBe(422);
+
+  expect((await patchItem({ trade_price: -1 })).status).toBe(422);
+  expect((await patchItem({ discount_amount: -1 })).status).toBe(422);
+  expect((await patchItem({ hsn_code: 'x'.repeat(30) })).status).toBe(422);
+});
+
+test('paid and free quantity are validated as two independent non-negative counts', async () => {
+  expect((await patchItem({ qty_billed: 10, qty_free: 5 })).status).not.toBe(422);
+  expect((await patchItem({ qty_billed: 0, qty_free: 12 })).status).not.toBe(422);
+  expect((await patchItem({ qty_billed: -1 })).status).toBe(422);
+  expect((await patchItem({ qty_free: -1 })).status).toBe(422);
+  expect((await patchItem({ qty_billed: 2.5 })).status).toBe(422);
+});
+
+test('party snapshot fields are accepted and length-bounded', async () => {
+  const r = await patchInvoice({
+    supplier_address: 'Station Road, Gadag', supplier_state: 'Karnataka', supplier_state_code: '29',
+    buyer_name: 'P. Care Pharma', buyer_gstin: '29ABCDE1234F1Z5', buyer_state_code: '29',
+  });
+  expect(r.status).not.toBe(422);
+  expect((await patchInvoice({ supplier_state_code: '2900' })).status).toBe(422);
+  expect((await patchInvoice({ buyer_address: 'x'.repeat(500) })).status).toBe(422);
+});
+
+test('status is still refused in the body, alongside every new field', async () => {
+  const r = await patchInvoice({ invoice_type: 'TAX_INVOICE', status: 'IMPORTED' });
+  expect([r.status, r.body.error]).toEqual([422, 'VALIDATION_ERROR']);
+});
+

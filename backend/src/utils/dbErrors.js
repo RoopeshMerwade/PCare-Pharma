@@ -40,6 +40,14 @@ const RPC_ERROR_MAP = {
   MISSING_SELLING_PRICE: [422, 'MISSING_SELLING_PRICE', 'A line has no selling price. Nothing was imported.'],
   MISSING_QTY:           [422, 'MISSING_QTY', 'A line has no quantity. Nothing was imported.'],
   COST_EXCEEDS_MRP:      [422, 'COST_EXCEEDS_MRP', 'A line costs more than its MRP. Check the pack size and rate.'],
+
+  // ── schema-37. The API blocks this before the RPC is reached
+  // (INVOICE_TYPE_NOT_IMPORTABLE is a document-level error, so can_import is
+  // already false), so arriving here means the check was raced or bypassed.
+  // A credit note is not a broken invoice — it is a document describing stock
+  // going the other way, which is what Supplier Returns is for, and the
+  // message has to say that rather than imply a scanning fault.
+  NOT_A_TAX_INVOICE:     [422, 'NOT_A_TAX_INVOICE', 'Only a tax invoice can be taken into stock. Record a credit or debit note under Supplier Returns instead.'],
 };
 
 // Returns an AppError for a Supabase/Postgres error, or null if unrecognized

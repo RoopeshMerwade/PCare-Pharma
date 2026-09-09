@@ -118,7 +118,9 @@ export default function useNotifications({ pollMs = POLL_MS } = {}) {
     if (wasUnread) setUnreadCount((c) => Math.max(0, c - 1));
 
     try {
-      await api.patch(`/notifications/${id}/read`);
+      // Encoded because a derived alert's id is an `alert:TYPE:entity:tier` key,
+      // not a UUID. Colons are legal in a path segment, but encoding is correct.
+      await api.patch(`/notifications/${encodeURIComponent(id)}/read`);
     } catch (err) {
       setRecentNotifications((ns) => ns.map((n) => (n.id === id ? { ...n, is_read: false } : n)));
       if (wasUnread) setUnreadCount((c) => c + 1);

@@ -21,6 +21,11 @@
 // SCREAMING_CASE string to the counter.
 
 const { totalUnits, lineValue, printedLineValue } = require('./supplier-invoices.normalize');
+const { finiteOrNull } = require('../../utils/money');
+const {
+  reconcileLine, gstMode,
+  summariseByRate, deriveInvoiceTotals, reconcileTaxSummary,
+} = require('./supplier-invoices.tax');
 
 /** Batches expiring sooner than this are flagged — not blocked. */
 const MIN_SHELF_LIFE_DAYS = 30;
@@ -205,6 +210,44 @@ function validateItem(item, context = {}) {
     ));
   }
 
+  // ── Line tax ───────────────────────────────────────────────────────────
+  //
+  // All advisory, without exception. Tax takes no part in what becomes stock —
+  // `unit_cost` is GST-exclusive and always has been — so a tax figure that
+  // disagrees with itself cannot make an import wrong. It can only make a
+  // GSTR-2 reconciliation wrong later, which is a thing a person fixes with
+  // the paper in front of them, not a reason to refuse a delivery that is
+  // physically standing at the counter.
+
+  const mode = gstMode(item);
+  if (mode === 'MIXED') {
+    found.push(issue(
+      'GST_SPLIT_INCONSISTENT', 'warning',
+      'This line carries both IGST and CGST/SGST. A supply is either within the state or across it, never both — one of the columns was misread.',
+      'igst_pct'
+    ));
+  } else if (mode === 'INTRA') {
+    // CGST and SGST are each exactly half the rate, by statute. A split that
+    // is not even is a column misalignment, and it is invisible in the total.
+    const cgst = finiteOrNull(item?.cgst_pct);
+    const sgst = finiteOrNull(item?.sgst_pct);
+    if (cgst !== null && sgst !== null && Math.abs(cgst - sgst) > 0.001) {
+      found.push(issue(
+        'GST_SPLIT_INCONSISTENT', 'warning',
+        `CGST is ${cgst}% and SGST is ${sgst}%. Within a state the two halves are always equal, so one of them was misread.`,
+        'cgst_pct'
+      ));
+    }
+  }
+
+  for (const mismatch of reconcileLine(item)) {
+    found.push(issue(
+      'LINE_TAX_MISMATCH', 'warning',
+      `The printed ${mismatch.field.replace(/_/g, ' ')} is ₹${mismatch.printed.toFixed(2)}, but this line's own rates give ₹${mismatch.computed.toFixed(2)}. Check the tax columns against the paper.`,
+      mismatch.field
+    ));
+  }
+
   return found.sort((a, b) => (a.severity === b.severity ? 0 : a.severity === 'error' ? -1 : 1));
 }
 
@@ -274,11 +317,19 @@ function validateInvoice(invoice, items = [], context = {}) {
     ));
   }
 
-  const taxable = Number(invoice?.taxable_total);
-  const gst = Number(invoice?.gst_total);
-  const net = Number(invoice?.net_total);
+  // ── Document totals ────────────────────────────────────────────────────
+  //
+  // finiteOrNull, NOT Number(). `Number(null)` is 0 and 0 is finite, so the
+  // bare-Number version of this block read an UNREAD gst_total as "GST is
+  // zero" — and then cheerfully confirmed taxable + 0 = net against a
+  // net_total that had itself fallen back to the ex-GST lines sum. The one
+  // case the reconciliation existed for was the one case it was blind to.
+  // utils/money.js documents exactly this trap; the guard belongs here too.
+  const taxable = finiteOrNull(invoice?.taxable_total);
+  const gst = finiteOrNull(invoice?.gst_total);
+  const net = finiteOrNull(invoice?.net_total);
 
-  if (Number.isFinite(taxable) && Number.isFinite(gst) && Number.isFinite(net)) {
+  if (taxable !== null && gst !== null && net !== null) {
     if (Math.abs(taxable + gst - net) > MONEY_TOLERANCE) {
       found.push(issue(
         'TOTALS_MISMATCH', 'warning',
@@ -286,9 +337,18 @@ function validateInvoice(invoice, items = [], context = {}) {
         'net_total'
       ));
     }
+  } else if (gst === null && taxable !== null && net !== null && active.length > 0) {
+    // The tax footer was not read at all. Say so, because the fallback that
+    // filled net_total in its absence is the sum of EX-GST line values — a
+    // figure that means "taxable", sitting in a column that means "payable".
+    found.push(issue(
+      'GST_TOTAL_UNREAD', 'warning',
+      'No GST total was read from this document, so the net total may be the pre-tax figure rather than what is actually payable. Enter the tax total from the invoice footer.',
+      'gst_total'
+    ));
   }
 
-  if (Number.isFinite(taxable) && taxable > 0 && active.length > 0) {
+  if (taxable !== null && taxable > 0 && active.length > 0) {
     const summed = active.reduce((sum, item) => sum + lineValue(item), 0);
     const tolerance = Math.max(MONEY_TOLERANCE, taxable * TOTALS_TOLERANCE_RATIO);
     if (Math.abs(summed - taxable) > tolerance) {
@@ -297,6 +357,102 @@ function validateInvoice(invoice, items = [], context = {}) {
         `The lines add up to ₹${summed.toFixed(2)} but the invoice's taxable total is ₹${taxable.toFixed(2)}. A line may be missing, or a rate may be per pack instead of per unit.`,
         'taxable_total'
       ));
+    }
+  }
+
+  // ── Document type ──────────────────────────────────────────────────────
+  //
+  // The one BLOCKING rule added here, and it blocks because the database
+  // blocks: commit_supplier_invoice() refuses anything that is not a tax
+  // invoice, so letting Approve run would produce a rolled-back transaction
+  // and a mapped code where an inline, actionable message belongs.
+  //
+  // A credit note is not a defective invoice — it is a different document,
+  // describing stock going the other way, which is what Supplier Returns is
+  // for. The message says that rather than implying the reviewer mis-scanned.
+  const invoiceType = invoice?.invoice_type;
+  if (invoiceType && invoiceType !== 'TAX_INVOICE') {
+    const label = invoiceType === 'CREDIT_NOTE' ? 'credit note' : 'debit note';
+    found.push(issue(
+      'INVOICE_TYPE_NOT_IMPORTABLE', 'error',
+      `This document is a ${label}, which moves stock out rather than in. It has been recorded, but it cannot be taken into stock here — raise it under Supplier Returns instead.`,
+      'invoice_type'
+    ));
+  }
+
+  // ── Tax reconciliation ─────────────────────────────────────────────────
+  //
+  // Advisory throughout, for the reason given on the line-level block: tax is
+  // not stock. What these do buy is the one extraction failure a reviewer
+  // genuinely cannot see — a whole rate band's worth of lines dropped from a
+  // multi-page table leaves nothing on screen to notice the absence of, and a
+  // printed slab with no lines behind it is exactly that shape.
+
+  const { rows: derivedRows, unresolvedLines } = summariseByRate(active);
+  const printedRows = Array.isArray(invoice?.tax_summary) ? invoice.tax_summary : [];
+
+  // Is this document carrying tax detail at all? A pre-Module-37 invoice has
+  // none — no line rates, no summary block — and complaining that its lines
+  // have no readable GST rate would put a warning on every legacy record and
+  // on every invoice from a pharmacy that simply does not capture tax. The
+  // rule worth having is the INCONSISTENT one: some lines carry a rate and
+  // others do not, which means a rate band is quietly missing from the
+  // summary. That needs at least one resolved rate, or a printed block, to be
+  // true — so gate on exactly that.
+  const documentCarriesTax = derivedRows.length > 0 || printedRows.length > 0;
+
+  if (unresolvedLines > 0 && documentCarriesTax) {
+    found.push(issue(
+      'TAX_RATE_UNRESOLVED', 'warning',
+      `${unresolvedLines} line${unresolvedLines === 1 ? ' carries' : 's carry'} money but no readable GST rate, so ${unresolvedLines === 1 ? 'it is' : 'they are'} absent from the tax summary. Set the rate on ${unresolvedLines === 1 ? 'that line' : 'those lines'} if this invoice is being kept for GST.`
+    ));
+  }
+
+  for (const mismatch of reconcileTaxSummary(printedRows, derivedRows)) {
+    if (mismatch.kind === 'missing') {
+      found.push(issue(
+        'TAX_SUMMARY_MISMATCH', 'warning',
+        `The invoice's tax summary lists a ${mismatch.tax_rate}% band but no line was read at that rate. Lines at ${mismatch.tax_rate}% may be missing from the document.`,
+        'tax_summary'
+      ));
+    } else if (mismatch.kind === 'extra') {
+      found.push(issue(
+        'TAX_SUMMARY_MISMATCH', 'warning',
+        `Lines were read at ${mismatch.tax_rate}% but the invoice's tax summary has no band at that rate. Check the GST% on those lines.`,
+        'tax_summary'
+      ));
+    } else {
+      found.push(issue(
+        'TAX_SUMMARY_MISMATCH', 'warning',
+        `At ${mismatch.tax_rate}% the invoice prints ${mismatch.field.replace(/_/g, ' ')} of ₹${mismatch.printed.toFixed(2)}, but the lines at that rate come to ₹${mismatch.computed.toFixed(2)}.`,
+        'tax_summary'
+      ));
+    }
+  }
+
+  // Net payable, against everything the lines and the adjustments imply.
+  //
+  // Gated on the LINES carrying tax, not just the document. A pre-Module-37
+  // invoice has a gst_total in its footer and no per-line breakdown at all, so
+  // the derived rollup would be ex-GST and would "disagree" with the printed
+  // net by exactly the tax — reporting a defect on every single legacy record.
+  // That check is already covered by TOTALS_MISMATCH, which compares the three
+  // printed figures against each other and needs no line-level tax to do it.
+  //
+  // So this fires only where there is genuinely something new to say: the
+  // lines carry their own tax, and rolling them up lands somewhere other than
+  // where the vendor's footer does.
+  if (net !== null && gst !== null && active.length > 0) {
+    const derived = deriveInvoiceTotals(active, invoice);
+    if (derived.net_payable !== null && derived.gst_total !== null) {
+      const tolerance = Math.max(MONEY_TOLERANCE, Math.abs(net) * TOTALS_TOLERANCE_RATIO);
+      if (Math.abs(derived.net_payable - net) > tolerance) {
+        found.push(issue(
+          'NET_PAYABLE_MISMATCH', 'warning',
+          `The lines, tax and adjustments come to ₹${derived.net_payable.toFixed(2)} but the invoice's net total is ₹${net.toFixed(2)}. Check the round-off and any additional or deduction amounts.`,
+          'net_total'
+        ));
+      }
     }
   }
 

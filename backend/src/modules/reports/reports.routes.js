@@ -13,6 +13,7 @@ const router = express.Router();
 router.use(authenticate);
 router.use(authorize('owner'));
 router.get('/sales',        dateQuery, validate, controller.sales);
+router.get('/sales/export', dateQuery, validate, controller.exportSales);
 router.get('/margins',      controller.margins);
 router.get('/purchases',    dateQuery, validate, controller.purchases);
 router.get('/inventory',    controller.inventory);

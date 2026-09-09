@@ -549,20 +549,34 @@ module.exports = {
   // â”€â”€ Notifications â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   'GET /api/v1/notifications': {
     name: 'List notifications',
-    description: 'Alerts for the signed-in user, newest first.',
-    query: { unreadOnly: ['false', 'true returns unread only'] },
+    description:
+      'Two sources in one list. **Events** are stored rows (staff check-ins, stock-requisition '
+      + 'outcomes), newest first. **Alerts** are derived per request from `expiry_summary` and '
+      + '`medicines_with_stock` and are never stored, so a sold or written-off batch drops out on '
+      + 'its own; they lead the list and carry `context`, `derived: true` and an `alert:` id. '
+      + 'Alerts are OWNER-ONLY and filtered server-side (A9) — a staff payload contains none.',
+    query: { unreadOnly: ['false', 'true returns unread only (stored events; alerts are never "read")'] },
   },
   'GET /api/v1/notifications/count': {
     name: 'Unread count',
-    description: '**Not yet surfaced in the frontend** â€” the header bell has no unread badge wired to this.',
+    description:
+      'Unread stored events plus live derived alerts. Emits `unread_count` (not `count`). '
+      + 'The alert total is uncapped even though the list above caps at 50, so the badge stays honest.',
   },
   'PATCH /api/v1/notifications/read-all': {
     name: 'Mark all read',
-    description: 'Clears the unread state for every notification belonging to the signed-in user.',
+    description:
+      'Clears both halves: marks every stored notification read AND dismisses every live derived '
+      + 'alert. One half alone would leave a badge that cannot be cleared.',
   },
   'PATCH /api/v1/notifications/:id/read': {
     name: 'Mark one read',
-    description: 'Marks a single notification read. Only affects notifications owned by the caller.',
+    description:
+      'Accepts two identifier shapes. A **notification UUID** sets `is_read`. An **alert key** '
+      + '(`alert:TYPE:entity_id:tier`, e.g. `alert:NEAR_EXPIRY:<batch_id>:critical`) writes a row to '
+      + '`notification_dismissals` instead, silencing that alert permanently. The tier is part of the '
+      + 'key, so dismissing a batch at 90 days does not silence it at 30 — it re-alerts on escalation. '
+      + 'Anything else is 422.',
     pathVars: { id: 'notification_id' },
   },
 
@@ -702,9 +716,29 @@ module.exports = {
     name: 'Correct invoice header',
     description:
       'Header corrections during review. `status` is deliberately rejected here â€” it moves only through `/approve` and `/reject`, which carry the role guard and the audit entry.\n\n' +
-      'Every save re-runs the deterministic rules and returns the recomputed `validation_warnings` and `can_import`.',
+      'Every save re-runs the deterministic rules and returns the recomputed `validation_warnings` and `can_import`.\n\n' +
+      '**`invoice_type` and `payment_type` are separate axes.** `invoice_type` is what the DOCUMENT is (`TAX_INVOICE` / `CREDIT_NOTE` / `DEBIT_NOTE`); `payment_type` is the terms (`CASH` / `CREDIT`). A tax invoice marked "Credit" is a `TAX_INVOICE` with `payment_type: CREDIT` — it is not a credit note, and treating it as one would reverse the direction of the stock it delivers. Only a `TAX_INVOICE` can be approved into stock; the others are recorded and refused with `INVOICE_TYPE_NOT_IMPORTABLE`.\n\n' +
+      '**`round_off` and `adjustment_amount` are signed.** A round-off is negative more often than positive: taxable 10327.05 + GST 1263.16 = 11590.21 against a printed payable of 11590.00 is `round_off: -0.21`. Every other money field is non-negative.\n\n' +
+      '**`tax_summary` is grouped by rate and REPLACES the stored block wholesale.** One entry per distinct GST rate — an invoice carrying 5%, 12% and 18% sends three. Rates must be unique within the array. Sending it replaces rather than merges, because correcting a misread rate has to remove the old band as well as add the new one.\n\n' +
+      'Printed totals are stored as printed and never overwritten by calculation. The response carries `derived_totals` — the API\'s own rollup of the lines — as a separate key so the two can be compared; disagreements surface as `TAX_SUMMARY_MISMATCH`, `NET_PAYABLE_MISMATCH` and `GST_TOTAL_UNREAD` warnings, none of which block import.\n\n' +
+      '⚠️ The tax, party and document fields need migration `schema-37-invoice-tax-detail.sql`. Without it they are silently dropped from the write and the endpoint behaves exactly as it did before.',
     pathVars: { id: 'supplier_invoice_id' },
-    body: { supplier_id: '{{supplier_id}}', invoice_no: 'INV/2026/8841', invoice_date: '2026-08-12', supplier_dl_no: 'KA-GD/1208-1/28965', taxable_total: 10000, gst_total: 1200, net_total: 11200 },
+    body: {
+      supplier_id: '{{supplier_id}}',
+      invoice_no: 'INV/2026/8841', invoice_date: '2026-08-12', invoice_time: '11:42',
+      invoice_type: 'TAX_INVOICE', payment_type: 'CREDIT', due_date: '2026-09-11',
+      order_number: 'PO-771', lr_number: 'LR-9931', page_number: 1, total_pages: 2,
+      supplier_dl_no: 'KA-GD/1208-1/28965', supplier_state: 'Karnataka', supplier_state_code: '29',
+      buyer_name: 'P. Care Pharma', buyer_gstin: '29ABCDE1234F1Z5', buyer_state_code: '29',
+      subtotal: 10309.28, total_discount: 309.28, taxable_total: 10000,
+      total_cgst: 600, total_sgst: 600, gst_total: 1200,
+      invoice_total: 11200, round_off: -0.21, net_total: 11199.79,
+      tax_summary: [
+        { tax_rate: 5, basic_amount: 2000, taxable_amount: 2000, cgst_amount: 50, sgst_amount: 50, total_tax: 100 },
+        { tax_rate: 12, basic_amount: 5000, taxable_amount: 5000, cgst_amount: 300, sgst_amount: 300, total_tax: 600 },
+        { tax_rate: 18, basic_amount: 3000, taxable_amount: 3000, cgst_amount: 270, sgst_amount: 270, total_tax: 540 },
+      ],
+    },
   },
   'PATCH /api/v1/supplier-invoices/:id/items/:itemId': {
     name: 'Correct invoice line',
@@ -713,10 +747,21 @@ module.exports = {
       '**Units â€” the rule this module most needs you to get right.** `qty_billed`/`qty_free` count SALEABLE units (strips, bottles, tubes, inhalers) and that IS the stock quantity: **stock taken in = qty_billed + qty_free**. The Pack column describes what is *inside* one of those units and never multiplies anything.\n\n' +
       '`"100\'S"` qty 5 is **5 strips at the printed rate each**, not 500 tablets. Verified on all 18 legible lines of two real MEDICO invoices: `qty_billed Ã— printed_rate = line_total`, every time.\n\n' +
       '**Printed vs derived.** `printed_rate`/`printed_mrp` are the figures exactly as printed, per saleable unit. `unit_cost` is `printed_rate` net of `discount_pct`; `mrp` is `printed_mrp` unchanged. `pack_raw` is parsed into the read-only `sale_unit`, `content_quantity`, `content_unit` and `sub_pack_*` fields â€” informational, shown to the reviewer, never multiplied into stock or money.\n\n' +
-      'Patching `printed_rate`, `printed_mrp`, `discount_pct` or `pack_raw` recomputes the derived fields. Sending `unit_cost`, `mrp` or `selling_price` explicitly in the same request suppresses that â€” a typed value always wins.\n\n' +
-      '`is_excluded: true` drops a line from the import (freight, samples) along with its warnings.',
+      'Patching `printed_rate`, `printed_mrp`, `discount_pct`, `discount_amount`, `line_total` or `pack_raw` recomputes the derived fields. Sending `unit_cost`, `mrp` or `selling_price` explicitly in the same request suppresses that — a typed value always wins.\n\n' +
+      '**Three prices, never two.** `printed_mrp` is what the patient pays, `printed_rate` is what this pharmacy was charged, and `trade_price` is the vendor\'s list price for the trade. MRP 28.31 against a rate of 20.22 is normal, not a conflict to reconcile — none of the three is ever copied into another.\n\n' +
+      '**Discount as an amount is now honoured.** Where a vendor prints `discount_amount` and no `discount_pct`, an effective percentage is derived from the gross and fed to the same costing formula. Before this the line silently costed at the FULL printed rate, with no warning, because the reconciliation compared gross against gross. A printed `discount_pct` always wins when both are present, so nothing changes for an invoice that carries one.\n\n' +
+      '**Tax is captured but is never a cost.** `cgst_*`/`sgst_*`/`igst_*`/`cess_*` and `hsn_code` are stored for the tax summary and GSTR-2 reconciliation. `unit_cost` stays GST-exclusive — a registered pharmacy reclaims input tax, so it is not part of what the stock cost. A line carries CGST+SGST **or** IGST, never both; sending both raises `GST_SPLIT_INCONSISTENT` (advisory).\n\n' +
+      '`is_excluded: true` drops a line from the import (freight, samples) along with its warnings.\n\n' +
+      '⚠️ The tax and HSN fields need migration `schema-37-invoice-tax-detail.sql`. Without it they are silently dropped from the write and the endpoint behaves exactly as it did before.',
     pathVars: { id: 'supplier_invoice_id', itemId: 'supplier_invoice_item_id' },
-    body: { batch_no: 'PC-9912', exp_date: '2028-04-30', qty_billed: 5, qty_free: 0, pack_raw: "100'S", printed_rate: 103.12, printed_mrp: 150, discount_pct: 3, gst_pct: 12 },
+    body: {
+      batch_no: 'PC-9912', exp_date: '2028-04-30',
+      qty_billed: 5, qty_free: 1, pack_raw: "100'S",
+      hsn_code: '30049099', printed_rate: 103.12, trade_price: 110, printed_mrp: 150,
+      discount_pct: 3, discount_amount: 15.47,
+      gst_pct: 12, cgst_pct: 6, cgst_amount: 30.01, sgst_pct: 6, sgst_amount: 30.01,
+      taxable_amount: 500.13, line_total: 515.6, net_amount: 560.15,
+    },
   },
   'POST /api/v1/supplier-invoices/:id/items/:itemId/medicine': {
     name: 'Quick add to catalogue + link', role: OWNER,

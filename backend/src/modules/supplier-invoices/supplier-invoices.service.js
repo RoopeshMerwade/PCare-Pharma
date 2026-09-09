@@ -15,18 +15,56 @@
 
 const { supabase } = require('../../config/supabase');
 const config = require('../../config/env');
+const { hasInvoiceTaxDetail } = require('../../config/capabilities');
 const { AppError } = require('../../utils/AppError');
 const { mapDbError } = require('../../utils/dbErrors');
 const { logAudit } = require('../../utils/audit');
 const logger = require('../../utils/logger');
 const { extractInvoice, assertExtractionAvailable } = require('./supplier-invoices.extraction');
 const {
-  normalizeExtraction, normalizeBatchNo, normalizeText,
+  normalizeExtraction, normalizeBatchNo, normalizeText, normalizeTaxSummary,
   descriptionForMatching, rederiveLine,
 } = require('./supplier-invoices.normalize');
 const { validateItem, validateInvoice, hasBlockingErrors } = require('./supplier-invoices.validate');
+const { deriveInvoiceTotals } = require('./supplier-invoices.tax');
 
 const BUCKET = config.invoices.bucket;
+
+/* ── Optional-migration field lists ─────────────────────────────────────────
+ *
+ * Everything schema-37 added, named in one place so a write can be stripped
+ * back to the pre-37 shape when the migration has not been applied. See
+ * config/capabilities.js: sending an unknown column fails the WHOLE insert,
+ * which on the ingest path means no goods inward at all.
+ *
+ * Kept as explicit lists rather than derived from the payload because that is
+ * what makes the degraded path AUDITABLE — a new column added later without a
+ * line here writes fine on a migrated database and breaks an unmigrated one,
+ * and the list is where a reviewer looks to notice that. */
+const TAX_DETAIL_INVOICE_FIELDS = [
+  'invoice_type', 'payment_type', 'invoice_time', 'due_date', 'transaction_date',
+  'order_number', 'order_date', 'lr_number', 'lr_date', 'page_number', 'total_pages',
+  'sales_executive',
+  'supplier_address', 'supplier_pan', 'supplier_email', 'supplier_state', 'supplier_state_code',
+  'buyer_name', 'buyer_address', 'buyer_gstin', 'buyer_pan', 'buyer_dl_no', 'buyer_phone',
+  'buyer_state', 'buyer_state_code',
+  'subtotal', 'total_discount', 'total_cgst', 'total_sgst', 'total_igst', 'total_cess',
+  'invoice_total', 'additional_amount', 'deduction_amount', 'adjustment_amount', 'round_off',
+];
+
+const TAX_DETAIL_ITEM_FIELDS = [
+  'hsn_code', 'trade_price', 'discount_amount', 'taxable_amount',
+  'cgst_pct', 'cgst_amount', 'sgst_pct', 'sgst_amount',
+  'igst_pct', 'igst_amount', 'cess_pct', 'cess_amount', 'net_amount',
+];
+
+/** Returns a copy of `row` with `fields` removed. Used only on the degraded
+ *  path — on a migrated database nothing is ever stripped. */
+function without(row, fields) {
+  const out = { ...row };
+  for (const field of fields) delete out[field];
+  return out;
+}
 
 /** Trigram score at or above which a catalogue match is applied automatically.
  *  Below it the candidates are still stored, so the picker opens pre-populated
@@ -62,6 +100,23 @@ async function listInvoices({ status, supplierId, page = 1, limit = 30 } = {}) {
   };
 }
 
+/** The transcribed tax-summary block, or [] where schema-37 is not applied.
+ *  Never throws: a missing summary must degrade to "no tax block on file",
+ *  not take the review screen down with it. */
+async function getTaxSummary(invoiceId) {
+  if (!(await hasInvoiceTaxDetail())) return [];
+  const { data, error } = await supabase
+    .from('supplier_invoice_tax_summary')
+    .select('*')
+    .eq('invoice_id', invoiceId)
+    .order('tax_rate');
+  if (error) {
+    logger.warn({ invoiceId, reason: error.message }, 'Tax summary lookup failed');
+    return [];
+  }
+  return data || [];
+}
+
 async function getInvoiceById(id) {
   const { data, error } = await supabase
     .from('supplier_invoices_with_counts').select('*').eq('id', id).single();
@@ -74,7 +129,22 @@ async function getInvoiceById(id) {
     .order('line_no');
   if (itemErr) throw new AppError('Failed to fetch invoice lines.', 500, 'DB_ERROR');
 
-  return { ...data, items: items || [] };
+  const tax_summary = await getTaxSummary(id);
+  const lines = items || [];
+
+  return {
+    ...data,
+    items: lines,
+    // What the vendor PRINTED in its tax block. May be empty — plenty of
+    // invoices have no summary, and every pre-schema-37 record has none.
+    tax_summary,
+    // What OUR rollup of the lines says, computed on read and never stored.
+    // Deliberately a separate key from the printed figures beside it: the two
+    // are meant to be comparable, and a single merged view would silently
+    // resolve exactly the disagreement a reviewer needs to see. Same
+    // separation as printed_rate vs unit_cost, one level up.
+    derived_totals: deriveInvoiceTotals(lines, data),
+  };
 }
 
 /**
@@ -322,7 +392,7 @@ async function ingestInvoice(file, { supplier_id } = {}, userId) {
     throw err;
   }
 
-  const { invoice: header, items } = normalizeExtraction(extraction.raw);
+  const { invoice: header, items, taxSummary } = normalizeExtraction(extraction.raw);
 
   // An explicitly chosen supplier always wins over the model's reading of the
   // letterhead — the person uploading knows who they bought from.
@@ -332,10 +402,14 @@ async function ingestInvoice(file, { supplier_id } = {}, userId) {
     resolvedSupplierId = resolved.supplier?.id || null;
   }
 
+  // One probe, reused for the header, the lines and the summary below, so a
+  // single ingest cannot write half a shape.
+  const taxDetail = await hasInvoiceTaxDetail();
+
   const { data: invoiceRow, error: insertErr } = await supabase
     .from('supplier_invoices')
     .insert({
-      ...header,
+      ...(taxDetail ? header : without(header, TAX_DETAIL_INVOICE_FIELDS)),
       supplier_id: resolvedSupplierId,
       status: 'NEEDS_REVIEW',
       storage_path: path,
@@ -382,7 +456,7 @@ async function ingestInvoice(file, { supplier_id } = {}, userId) {
       const best = candidates[0];
       const auto = best && best.score >= AUTO_MATCH_THRESHOLD ? best : null;
       staged.push({
-        ...item,
+        ...(taxDetail ? item : without(item, TAX_DETAIL_ITEM_FIELDS)),
         invoice_id: invoiceRow.id,
         medicine_id: auto?.id || null,
         match_source: auto ? 'auto' : null,
@@ -410,6 +484,27 @@ async function ingestInvoice(file, { supplier_id } = {}, userId) {
     }
   }
 
+  // ── The vendor's own tax block, one row per rate.
+  //
+  // Logged rather than thrown, and deliberately NOT part of the unwind above.
+  // The lines are what become stock; the summary is a cross-check on them. A
+  // draft with lines and no summary is reviewable and importable, and losing
+  // an upload — with its storage write and its Gemini call already paid for —
+  // because a secondary table rejected a row would be a much worse trade. The
+  // reconciliation simply has nothing printed to compare against, which is the
+  // same state as an invoice that never had a summary block.
+  if (taxDetail && taxSummary.length) {
+    const { error: taxErr } = await supabase
+      .from('supplier_invoice_tax_summary')
+      .insert(taxSummary.map((row) => ({ ...row, invoice_id: invoiceRow.id })));
+    if (taxErr) {
+      logger.warn(
+        { reason: taxErr.message, invoiceId: invoiceRow.id, rows: taxSummary.length },
+        'Failed to stage invoice tax summary; the draft is usable without it'
+      );
+    }
+  }
+
   await logAudit(userId, 'supplier_invoice_uploaded', {
     invoiceId: invoiceRow.id,
     fileName: file.originalname,
@@ -430,6 +525,8 @@ async function ingestInvoice(file, { supplier_id } = {}, userId) {
 const INVOICE_FIELDS = [
   'supplier_id', 'invoice_no', 'invoice_date',
   'taxable_total', 'gst_total', 'net_total', 'supplier_gstin', 'supplier_dl_no', 'supplier_phone',
+  // ── schema-37. Stripped from the write when the migration is absent.
+  ...TAX_DETAIL_INVOICE_FIELDS,
 ];
 
 const ITEM_FIELDS = [
@@ -437,13 +534,23 @@ const ITEM_FIELDS = [
   'qty_billed', 'qty_free', 'pack_raw',
   'printed_rate', 'printed_mrp', 'discount_pct', 'gst_pct',
   'unit_cost', 'mrp', 'selling_price', 'line_total', 'is_excluded',
+  // ── schema-37. Stripped from the write when the migration is absent.
+  ...TAX_DETAIL_ITEM_FIELDS,
 ];
 
 /** Editing any of these changes what the derived columns should be. Note that
  *  qty_billed is NOT among them: quantity is the stock figure itself and has no
  *  bearing on the per-unit cost, which is exactly the separation this module
- *  got wrong before. */
-const DERIVATION_INPUTS = ['pack_raw', 'printed_rate', 'printed_mrp', 'discount_pct'];
+ *  got wrong before.
+ *
+ *  discount_amount IS among them, and has to be: on an invoice that prints an
+ *  amount and no percentage it is the only thing that carries the discount, so
+ *  correcting it must move the cost exactly as correcting a percentage does.
+ *  line_total joins for the same reason — it is the gross the amount is a
+ *  proportion of, so changing it changes the effective percentage. */
+const DERIVATION_INPUTS = [
+  'pack_raw', 'printed_rate', 'printed_mrp', 'discount_pct', 'discount_amount', 'line_total',
+];
 /** …unless the reviewer set the answer directly in the same request. A typed
  *  cost is a decision about this specific line and always wins over arithmetic. */
 const DERIVED_OUTPUTS = ['unit_cost', 'mrp', 'selling_price'];
@@ -465,16 +572,73 @@ async function assertEditable(id) {
   return data;
 }
 
+/**
+ * Replaces an invoice's transcribed tax block wholesale.
+ *
+ * Replace, not merge, and deliberately: the block is grouped BY RATE, so
+ * correcting a misread "12" to "18" has to REMOVE the 12% row as well as add
+ * the 18% one. A merge would leave a phantom band behind, and a phantom band
+ * reconciles against nothing and reports a missing rate that was never there.
+ *
+ * Delete-then-insert inside one request rather than an upsert, because the
+ * rows have no stable identity across an edit — the rate is the key, and the
+ * rate is exactly what an edit changes.
+ */
+async function replaceTaxSummary(invoiceId, rows) {
+  if (!(await hasInvoiceTaxDetail())) {
+    throw new AppError(
+      'Tax summaries are not available on this server until the invoice tax-detail migration has been applied. Contact the administrator.',
+      503, 'TAX_DETAIL_UNAVAILABLE'
+    );
+  }
+
+  const normalized = normalizeTaxSummary({ tax_summary: rows });
+
+  const { error: delErr } = await supabase
+    .from('supplier_invoice_tax_summary').delete().eq('invoice_id', invoiceId);
+  if (delErr) throw new AppError('The tax summary could not be updated.', 500, 'DB_ERROR');
+
+  if (!normalized.length) return;
+
+  const { error: insErr } = await supabase
+    .from('supplier_invoice_tax_summary')
+    .insert(normalized.map((row) => ({ ...row, invoice_id: invoiceId })));
+  if (insErr) throw new AppError('The tax summary could not be saved.', 500, 'DB_ERROR');
+}
+
 async function updateInvoice(id, payload, userId) {
   await assertEditable(id);
 
+  const taxDetail = await hasInvoiceTaxDetail();
+  const writable = taxDetail
+    ? INVOICE_FIELDS
+    : INVOICE_FIELDS.filter((f) => !TAX_DETAIL_INVOICE_FIELDS.includes(f));
+
   const updates = {};
-  for (const key of INVOICE_FIELDS) {
+  for (const key of writable) {
     if (payload[key] === undefined) continue;
     updates[key] = payload[key] === '' ? null : payload[key];
   }
   if (typeof updates.invoice_no === 'string') updates.invoice_no = normalizeText(updates.invoice_no, 60);
-  if (!Object.keys(updates).length) throw new AppError('No updatable fields.', 422, 'NO_FIELDS');
+
+  // invoice_type is NOT NULL. An explicit null would violate the column rather
+  // than "clear" it, and there is no such thing as a document with no type.
+  if (updates.invoice_type === null) delete updates.invoice_type;
+
+  // The tax block travels as its own array and lands in its own table, so it
+  // is handled apart from the column updates — but it still counts as a field
+  // for the "nothing to do" check below.
+  const taxSummaryProvided = Array.isArray(payload.tax_summary);
+
+  if (!Object.keys(updates).length && !taxSummaryProvided) {
+    throw new AppError('No updatable fields.', 422, 'NO_FIELDS');
+  }
+
+  if (taxSummaryProvided) await replaceTaxSummary(id, payload.tax_summary);
+  if (!Object.keys(updates).length) {
+    await logAudit(userId, 'supplier_invoice_edited', { invoiceId: id, fields: ['tax_summary'] });
+    return await revalidate(id);
+  }
 
   const { error } = await supabase.from('supplier_invoices').update(updates).eq('id', id);
   if (error) {
@@ -486,7 +650,10 @@ async function updateInvoice(id, payload, userId) {
     throw new AppError('The invoice could not be updated.', 500, 'DB_ERROR');
   }
 
-  await logAudit(userId, 'supplier_invoice_edited', { invoiceId: id, fields: Object.keys(updates) });
+  await logAudit(userId, 'supplier_invoice_edited', {
+    invoiceId: id,
+    fields: taxSummaryProvided ? [...Object.keys(updates), 'tax_summary'] : Object.keys(updates),
+  });
   return await revalidate(id);
 }
 
@@ -497,8 +664,13 @@ async function updateItem(invoiceId, itemId, payload, userId) {
     .from('supplier_invoice_items').select('*').eq('id', itemId).eq('invoice_id', invoiceId).single();
   if (loadErr || !existing) throw new AppError('That line is not on this invoice.', 404, 'ITEM_NOT_FOUND');
 
+  const taxDetail = await hasInvoiceTaxDetail();
+  const writable = taxDetail
+    ? ITEM_FIELDS
+    : ITEM_FIELDS.filter((f) => !TAX_DETAIL_ITEM_FIELDS.includes(f));
+
   const updates = {};
-  for (const key of ITEM_FIELDS) {
+  for (const key of writable) {
     if (payload[key] === undefined) continue;
     updates[key] = payload[key] === '' ? null : payload[key];
   }
@@ -645,5 +817,9 @@ module.exports = {
   rejectInvoice,
   matchMedicines,
   revalidate,
+  getTaxSummary,
+  replaceTaxSummary,
   AUTO_MATCH_THRESHOLD,
+  TAX_DETAIL_INVOICE_FIELDS,
+  TAX_DETAIL_ITEM_FIELDS,
 };

@@ -107,10 +107,16 @@ function NotificationRow({ notification, isOwner, onSelect }) {
             </span>
           )}
 
-          {/* Time with clock icon */}
+          {/* Time with clock icon.
+
+              Derived alerts (expiry, low stock) carry `context` instead — "Expires
+              in 12 days", "Out of stock". They are conditions, not events, so a
+              relative timestamp is the wrong thing to print: low stock has no
+              derivable onset at all, and a batch that entered the critical window
+              a month ago would read "Just now" on every poll. */}
           <span className="mt-s1 flex items-center gap-s1 text-base text-muted-foreground font-normal">
             <ClockIcon className="h-3 w-3 inline shrink-0 opacity-70" />
-            <span>{formatRelativeTime(notification.created_at)}</span>
+            <span>{notification.context || formatRelativeTime(notification.created_at)}</span>
           </span>
         </span>
       </button>

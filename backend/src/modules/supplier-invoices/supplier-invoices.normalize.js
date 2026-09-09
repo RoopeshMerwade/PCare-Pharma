@@ -137,6 +137,67 @@ function normalizeAmount(value) {
   return Math.round(n * 100) / 100;
 }
 
+/**
+ * A money figure that MAY be negative, or null.
+ *
+ * `normalizeAmount` rejects negatives, which is right for a rate and wrong for
+ * a round-off. MEDICO M002948 rounds ₹11590.21 DOWN to ₹11590.00 — a round-off
+ * of −0.21 — and rounding down is the commoner direction, so a non-negative
+ * guard would make the ordinary case unstorable. Used only for `round_off` and
+ * `adjustment_amount`, the two columns whose CHECK constraints are unsigned to
+ * match.
+ */
+function normalizeSignedAmount(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const n = typeof value === 'number' ? value : parseFloat(String(value).replace(/[₹,\s]/g, ''));
+  if (!Number.isFinite(n)) return null;
+  return roundPaise(n);
+}
+
+/**
+ * A time of day as HH:MM:SS, or null.
+ *
+ * Accepts "14:35", "14:35:20", "2:35 PM", "02:35:20 pm". Rejects anything else
+ * rather than guessing — an invoice time is a convenience field and a wrong one
+ * is worse than a blank.
+ */
+function normalizeTime(value) {
+  if (value === null || value === undefined) return null;
+  const s = String(value).trim().toUpperCase();
+  if (!s) return null;
+
+  const m = /^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?$/.exec(s);
+  if (!m) return null;
+
+  let hour = Number(m[1]);
+  const minute = Number(m[2]);
+  const second = m[3] ? Number(m[3]) : 0;
+  const meridiem = m[4];
+
+  if (meridiem === 'PM' && hour < 12) hour += 12;
+  if (meridiem === 'AM' && hour === 12) hour = 0;
+
+  if (hour > 23 || minute > 59 || second > 59) return null;
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${pad(hour)}:${pad(minute)}:${pad(second)}`;
+}
+
+/**
+ * A GST state code — two digits, zero-padded.
+ *
+ * "29" (Karnataka) is printed as 29, 029 and sometimes "29 - Karnataka". Kept
+ * as text rather than an int because the leading zero is part of the code:
+ * Jammu & Kashmir is "01", not 1.
+ */
+function normalizeStateCode(value) {
+  if (value === null || value === undefined) return null;
+  const m = /(\d{1,2})/.exec(String(value).trim());
+  if (!m) return null;
+  const n = Number(m[1]);
+  if (!Number.isFinite(n) || n < 1 || n > 99) return null;
+  return String(n).padStart(2, '0');
+}
+
 /** A whole count, or null. Fractional quantities are rounded down rather than
  *  rejected — "2.00" is common in a Qty column, "2.5 boxes" is a misread. */
 function normalizeInt(value, { min = 0 } = {}) {
@@ -354,6 +415,43 @@ function descriptionForMatching(value) {
  * Free goods are not spread across the cost: qty_free units enter stock at the
  * same cost as billed ones, and lineValue charges only for billed units.
  */
+/**
+ * The discount percentage that should actually be applied to this line.
+ *
+ * `discount_pct` when the vendor printed one — in which case NOTHING changes
+ * and this function is a pass-through. That is the whole backward-compatibility
+ * story: every invoice that worked before produces exactly the same cost.
+ *
+ * The fallback exists because a vendor who prints a "Dis.Amt" column and no
+ * "Dis.%" column used to produce a cost at the FULL printed rate, silently.
+ * Nothing caught it: LINE_TOTAL_MISMATCH reconciles qty × printed_rate against
+ * the printed gross, and both of those are gross, so they agreed while the
+ * pharmacy's recorded cost was too high by the whole discount. An overstated
+ * cost understates every margin computed from it, which is the opposite of the
+ * direction roundPaise is careful to lean.
+ *
+ * Deriving a percentage rather than subtracting an amount is deliberate: it
+ * feeds the SAME `deriveUnitCost` below, so there is exactly one costing
+ * formula and one rounding step no matter which column the vendor printed.
+ *
+ * Returns null — not 0 — when neither is readable, so an absent discount stays
+ * absent rather than becoming an assertion that none was given.
+ */
+function resolveDiscountPct({ discount_pct, discount_amount, gross }) {
+  const pct = finiteOrNull(discount_pct);
+  if (pct !== null) return pct;
+
+  const amount = finiteOrNull(discount_amount);
+  const base = finiteOrNull(gross);
+  if (amount === null || base === null || base <= 0 || amount <= 0) return null;
+
+  const derived = (amount / base) * 100;
+  // A discount above 100% is a misread of the column, not a deal — the same
+  // judgement normalizePercent already makes. Refused rather than clamped.
+  if (!Number.isFinite(derived) || derived > 100) return null;
+  return derived;
+}
+
 function deriveUnitCost({ printed_rate, discount_pct }) {
   const rate = finiteOrNull(printed_rate);
   if (rate === null || rate < 0) return null;
@@ -450,6 +548,7 @@ function normalizeItem(raw, lineNo) {
   const printed_rate = normalizeAmount(raw?.unit_cost);
   const printed_mrp = normalizeAmount(raw?.mrp);
   const discount_pct = normalizePercent(raw?.discount_pct);
+  const discount_amount = normalizeAmount(raw?.discount_amount);
   const line_total = normalizeAmount(raw?.line_total);
   const qty_billed = normalizeInt(raw?.qty_billed, { min: 0 });
 
@@ -457,6 +556,14 @@ function normalizeItem(raw, lineNo) {
   const raw_description = normalizeText(raw?.description, 300);
   const pack = parsePack(pack_raw);
   const mrp = deriveUnitMrp({ printed_mrp });
+
+  // The gross this line's discount applies to, used ONLY to rescue a discount
+  // printed as an amount. Prefers the printed total for the same reason
+  // tax.js does: the vendor has already settled that line's rounding.
+  const gross = line_total ?? (
+    qty_billed !== null && printed_rate !== null ? roundPaise(qty_billed * printed_rate) : null
+  );
+  const effective_discount_pct = resolveDiscountPct({ discount_pct, discount_amount, gross });
 
   return {
     line_no: lineNo,
@@ -483,12 +590,34 @@ function normalizeItem(raw, lineNo) {
     // Transcribed money, per saleable unit, exactly as printed.
     printed_rate,
     printed_mrp,
+    // A THIRD price, not a synonym for either of the two above: PTR/Trade
+    // Price is the list price for the trade, printed_rate is what this
+    // pharmacy was actually charged, printed_mrp is what the patient pays.
+    trade_price: normalizeAmount(raw?.trade_price),
     discount_pct,
+    discount_amount,
     gst_pct: normalizePercent(raw?.gst_pct),
     line_total,
 
+    // ── Transcribed tax, per line. Captured for the slab summary and GSTR-2
+    // reconciliation; deliberately absent from the costing chain below, because
+    // a GST-registered pharmacy reclaims input tax and it is therefore not a
+    // cost. See deriveUnitCost.
+    hsn_code: normalizeText(raw?.hsn_code, 20),
+    taxable_amount: normalizeAmount(raw?.taxable_amount),
+    cgst_pct: normalizePercent(raw?.cgst_pct),
+    cgst_amount: normalizeAmount(raw?.cgst_amount),
+    sgst_pct: normalizePercent(raw?.sgst_pct),
+    sgst_amount: normalizeAmount(raw?.sgst_amount),
+    igst_pct: normalizePercent(raw?.igst_pct),
+    igst_amount: normalizeAmount(raw?.igst_amount),
+    cess_pct: normalizePercent(raw?.cess_pct),
+    cess_amount: normalizeAmount(raw?.cess_amount),
+    net_amount: normalizeAmount(raw?.net_amount),
+
     // Derived money, also per saleable unit. Cost is net of discount; MRP is not.
-    unit_cost: deriveUnitCost({ printed_rate, discount_pct }),
+    // GST takes no part — that is unchanged and must stay unchanged.
+    unit_cost: deriveUnitCost({ printed_rate, discount_pct: effective_discount_pct }),
     mrp,
     selling_price: mrp,
   };
@@ -509,8 +638,18 @@ function rederiveLine(merged) {
   const printed_rate = normalizeAmount(merged.printed_rate);
   const printed_mrp = normalizeAmount(merged.printed_mrp);
   const discount_pct = normalizePercent(merged.discount_pct);
+  const discount_amount = normalizeAmount(merged.discount_amount);
+  const line_total = normalizeAmount(merged.line_total);
+  const qty_billed = normalizeInt(merged.qty_billed, { min: 0 });
   const pack = parsePack(merged.pack_raw);
   const mrp = deriveUnitMrp({ printed_mrp });
+
+  // Same gross basis as normalizeItem, so a corrected discount amount moves the
+  // cost exactly as a corrected percentage does.
+  const gross = line_total ?? (
+    qty_billed !== null && printed_rate !== null ? roundPaise(qty_billed * printed_rate) : null
+  );
+  const effective_discount_pct = resolveDiscountPct({ discount_pct, discount_amount, gross });
 
   return {
     sale_unit: deriveSaleUnit(merged.raw_description, pack),
@@ -519,34 +658,137 @@ function rederiveLine(merged) {
     sub_pack_quantity: pack.sub_pack_quantity,
     sub_pack_unit: pack.sub_pack_unit,
     pack_recognised: pack.recognised,
-    unit_cost: deriveUnitCost({ printed_rate, discount_pct }),
+    unit_cost: deriveUnitCost({ printed_rate, discount_pct: effective_discount_pct }),
     mrp,
     // A price the reviewer already set is a decision; only fill a blank.
     selling_price: merged.selling_price ?? mrp,
   };
 }
 
-/** Turns the model's whole answer into { invoice, items } in schema shape. */
+/** The invoice's own tax-summary block, one row per rate, transcribed.
+ *
+ *  Rows with no readable rate are dropped rather than bucketed into a rate
+ *  they may not belong to — an unassignable slab row is worse than a missing
+ *  one, because it looks reconciled. Duplicate rates are collapsed to the
+ *  first: the table has a unique (invoice_id, tax_rate) index, so a second row
+ *  at the same rate would fail the whole insert. */
+function normalizeTaxSummary(raw) {
+  const rows = Array.isArray(raw?.tax_summary) ? raw.tax_summary : [];
+  const seen = new Set();
+  const out = [];
+
+  for (const row of rows) {
+    const tax_rate = normalizePercent(row?.tax_rate);
+    if (tax_rate === null) continue;
+    if (seen.has(tax_rate)) continue;
+    seen.add(tax_rate);
+
+    out.push({
+      tax_rate,
+      basic_amount: normalizeAmount(row?.basic_amount),
+      discount_amount: normalizeAmount(row?.discount_amount),
+      taxable_amount: normalizeAmount(row?.taxable_amount),
+      cgst_amount: normalizeAmount(row?.cgst_amount),
+      sgst_amount: normalizeAmount(row?.sgst_amount),
+      igst_amount: normalizeAmount(row?.igst_amount),
+      cess_amount: normalizeAmount(row?.cess_amount),
+      total_tax: normalizeAmount(row?.total_tax),
+    });
+  }
+
+  return out.sort((a, b) => a.tax_rate - b.tax_rate);
+}
+
+/** Turns the model's whole answer into { invoice, items, taxSummary } in schema shape. */
 function normalizeExtraction(raw) {
   const items = Array.isArray(raw?.line_items) ? raw.line_items : [];
   const normalizedItems = items.map((item, i) => normalizeItem(item, i + 1));
   const computedLinesTotal = normalizedItems.reduce((sum, item) => sum + (lineValue(item) || 0), 0);
   const roundedLinesTotal = computedLinesTotal > 0 ? roundPaise(computedLinesTotal) : null;
 
+  // Invoice type defaults rather than falling back to null: the column is NOT
+  // NULL, and 'TAX_INVOICE' is what every document this pipeline has ever
+  // handled actually was. An unreadable type on a genuine credit note is
+  // caught by the reviewer, who has the paper in hand.
+  const printedType = normalizeText(raw?.invoice_type, 20);
+  const invoice_type = printedType && ['TAX_INVOICE', 'CREDIT_NOTE', 'DEBIT_NOTE'].includes(printedType.toUpperCase())
+    ? printedType.toUpperCase()
+    : 'TAX_INVOICE';
+
+  // Payment terms are a SEPARATE axis from document type. "CREDIT" here means
+  // the pharmacy has not paid yet; it never means the document is a credit
+  // note. Null when unreadable — an unpaid delivery guessed as CASH would
+  // silently clear a payable.
+  const printedPayment = normalizeText(raw?.payment_type, 20);
+  const payment_type = printedPayment && ['CASH', 'CREDIT'].includes(printedPayment.toUpperCase())
+    ? printedPayment.toUpperCase()
+    : null;
+
   return {
     invoice: {
+      // ── Vendor snapshot, as printed on the letterhead
       supplier_name_raw: normalizeText(raw?.supplier_name, 200),
       supplier_gstin: normalizeGstin(raw?.supplier_gstin),
       supplier_dl_no: normalizeText(raw?.supplier_dl_no, 100),
       supplier_phone: normalizePhone(raw?.supplier_phone),
+      supplier_address: normalizeText(raw?.supplier_address, 400),
+      supplier_pan: normalizeGstin(raw?.supplier_pan),
+      supplier_email: normalizeText(raw?.supplier_email, 120),
+      supplier_state: normalizeText(raw?.supplier_state, 60),
+      supplier_state_code: normalizeStateCode(raw?.supplier_state_code),
+
+      // ── Buyer snapshot: this pharmacy, as the vendor printed it
+      buyer_name: normalizeText(raw?.buyer_name, 200),
+      buyer_address: normalizeText(raw?.buyer_address, 400),
+      buyer_gstin: normalizeGstin(raw?.buyer_gstin),
+      buyer_pan: normalizeGstin(raw?.buyer_pan),
+      buyer_dl_no: normalizeText(raw?.buyer_dl_no, 100),
+      buyer_phone: normalizePhone(raw?.buyer_phone),
+      buyer_state: normalizeText(raw?.buyer_state, 60),
+      buyer_state_code: normalizeStateCode(raw?.buyer_state_code),
+
+      // ── Document identity and references
       invoice_no: normalizeText(raw?.invoice_no, 60),
       invoice_date: normalizeDate(raw?.invoice_date),
-      taxable_total: normalizeAmount(raw?.taxable_total) ?? roundedLinesTotal,
-      gst_total: normalizeAmount(raw?.gst_total),
-      net_total: normalizeAmount(raw?.net_total) ?? roundedLinesTotal,
+      invoice_time: normalizeTime(raw?.invoice_time),
+      invoice_type,
+      payment_type,
+      due_date: normalizeDate(raw?.due_date),
+      transaction_date: normalizeDate(raw?.transaction_date),
+      order_number: normalizeText(raw?.order_number, 60),
+      order_date: normalizeDate(raw?.order_date),
+      lr_number: normalizeText(raw?.lr_number, 60),
+      lr_date: normalizeDate(raw?.lr_date),
+      page_number: normalizeInt(raw?.page_number, { min: 1 }),
+      total_pages: normalizeInt(raw?.total_pages, { min: 1 }),
+      sales_executive: normalizeText(raw?.sales_executive, 120),
       printed_item_count: normalizeInt(raw?.printed_item_count, { min: 0 }),
+
+      // ── Printed money. Transcribed, never computed here.
+      //
+      // taxable_total and net_total keep their long-standing fallback to the
+      // lines sum so an unreadable footer still yields a usable draft. That
+      // fallback is EX-GST, which is why validateInvoice now says so out loud
+      // rather than letting a silent zero-GST reconciliation confirm it.
+      subtotal: normalizeAmount(raw?.subtotal),
+      total_discount: normalizeAmount(raw?.total_discount),
+      taxable_total: normalizeAmount(raw?.taxable_total) ?? roundedLinesTotal,
+      total_cgst: normalizeAmount(raw?.total_cgst),
+      total_sgst: normalizeAmount(raw?.total_sgst),
+      total_igst: normalizeAmount(raw?.total_igst),
+      total_cess: normalizeAmount(raw?.total_cess),
+      gst_total: normalizeAmount(raw?.gst_total),
+      invoice_total: normalizeAmount(raw?.invoice_total),
+      additional_amount: normalizeAmount(raw?.additional_amount),
+      deduction_amount: normalizeAmount(raw?.deduction_amount),
+      // Signed — see normalizeSignedAmount. A round-off is negative more often
+      // than positive.
+      adjustment_amount: normalizeSignedAmount(raw?.adjustment_amount),
+      round_off: normalizeSignedAmount(raw?.round_off),
+      net_total: normalizeAmount(raw?.net_total) ?? roundedLinesTotal,
     },
     items: normalizedItems,
+    taxSummary: normalizeTaxSummary(raw),
   };
 }
 
@@ -620,16 +862,21 @@ function printedLineValue(item) {
 module.exports = {
   normalizeExtraction,
   normalizeItem,
+  normalizeTaxSummary,
   rederiveLine,
   normalizeExpiry,
   normalizeMfg,
   normalizeDate,
   normalizeAmount,
+  normalizeSignedAmount,
+  normalizeTime,
+  normalizeStateCode,
   normalizeInt,
   normalizePercent,
   normalizeBatchNo,
   normalizeText,
   normalizeGstin,
+  resolveDiscountPct,
   descriptionForMatching,
   parsePack,
   deriveSaleUnit,

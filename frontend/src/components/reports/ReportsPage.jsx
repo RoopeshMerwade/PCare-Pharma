@@ -8,12 +8,15 @@ import Field from '../../ui/Field';
 import Input from '../../ui/Input';
 import Select from '../../ui/Select';
 import Table from '../../ui/Table';
+import Button from '../../ui/Button';
 import ErrorState from '../../ui/ErrorState';
 import Skeleton, {
   SkeletonRegion, SkeletonTile, SkeletonChart, SkeletonTable,
 } from '../../ui/Skeleton';
 import { Money, Qty } from '../../domain/Money';
 import { StockBadge, PurchaseStatusBadge } from '../../domain/StatusBadge';
+import { DownloadIcon } from '../../ui/icons';
+import { useToast } from '../../ui/Toast';
 import {
   StatTile,
   RevenueTrendCard,
@@ -38,9 +41,11 @@ const firstOfMonth = () => {
 };
 
 export default function ReportsPage() {
+  const toast = useToast();
   const [tab, setTab] = useState('sales');
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [downloading, setDownloading] = useState(false);
   const [error, setError] = useState(null);
   const [dateFrom, setDateFrom] = useState(firstOfMonth);
   const [dateTo, setDateTo] = useState(() => new Date().toISOString().slice(0, 10));
@@ -76,6 +81,20 @@ export default function ReportsPage() {
 
   useEffect(() => { fetchReport(); }, [fetchReport]);
 
+  const handleDownloadExcel = async () => {
+    if (downloading) return;
+    setDownloading(true);
+    try {
+      const params = new URLSearchParams({ dateFrom, dateTo });
+      const filename = await api.download(`/reports/sales/export?${params}`);
+      toast.success(`${filename} downloaded.`);
+    } catch (err) {
+      toast.error(err.message || 'Failed to download sales report.');
+    } finally {
+      setDownloading(false);
+    }
+  };
+
   const activeTab = TABS.find((t) => t.value === tab);
   const refreshing = loading && !!data;
 
@@ -91,21 +110,37 @@ export default function ReportsPage() {
         </TabsList>
 
         {activeTab?.dated && (
-          <div className="mt-s4 grid gap-s3 sm:grid-cols-3 sm:max-w-[36rem]">
-            <Field label="From date">
-              <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
-            </Field>
-            <Field label="To date">
-              <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
-            </Field>
-            {tab === 'sales' && (
-              <Field label="Group by">
-                <Select value={groupBy} onChange={(e) => setGroupBy(e.target.value)}>
-                  <option value="day">Day</option>
-                  <option value="week">Week</option>
-                  <option value="month">Month</option>
-                </Select>
+          <div className="mt-s4 flex flex-wrap items-end justify-between gap-s3">
+            <div className="grid flex-1 gap-s3 sm:grid-cols-3 sm:max-w-[36rem]">
+              <Field label="From date">
+                <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
               </Field>
+              <Field label="To date">
+                <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+              </Field>
+              {tab === 'sales' && (
+                <Field label="Group by">
+                  <Select value={groupBy} onChange={(e) => setGroupBy(e.target.value)}>
+                    <option value="day">Day</option>
+                    <option value="week">Week</option>
+                    <option value="month">Month</option>
+                  </Select>
+                </Field>
+              )}
+            </div>
+
+            {tab === 'sales' && (
+              <div className="mb-s1">
+                <Button
+                  variant="secondary"
+                  disabled={downloading}
+                  onClick={handleDownloadExcel}
+                  className="flex items-center gap-s2"
+                >
+                  <DownloadIcon className="h-4 w-4" />
+                  {downloading ? 'Downloading…' : 'Download Excel'}
+                </Button>
+              </div>
             )}
           </div>
         )}
