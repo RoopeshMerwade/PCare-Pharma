@@ -128,6 +128,22 @@ async function createBill({ customer_name, customer_phone, customer_id, payment_
     resolvedItems.push(...lines.map((l) => ({ medicine_id: item.medicine_id, ...l })));
   }
 
+  // A discount may not exceed the bill. bills_with_totals computes
+  // total = subtotal − discount with no floor, so a larger discount stored a
+  // negative sale that every sales figure then summed. create_bill_atomic
+  // refuses it too (schema-39); checking here first is what lets the message
+  // carry the amounts. Compared in paise, so float drift in the sum cannot
+  // decide it.
+  const subtotalPaise = resolvedItems.reduce((sum, line) => sum + Math.round(line.qty * line.unit_price * 100), 0);
+  const discountPaise = Math.round((Number(discount_amount) || 0) * 100);
+  if (discountPaise > subtotalPaise) {
+    const rupees = (paise) => (paise / 100).toFixed(2);
+    throw new AppError(
+      `The discount (₹${rupees(discountPaise)}) cannot be more than the bill total (₹${rupees(subtotalPaise)}).`,
+      422, 'DISCOUNT_EXCEEDS_TOTAL'
+    );
+  }
+
   // One transaction: bill header + items + negative ledger entries all
   // commit together. A concurrent sale that empties a batch between the
   // FEFO read and here trips the DB trigger and the WHOLE bill rolls back —

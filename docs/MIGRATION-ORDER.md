@@ -416,6 +416,21 @@ These exist and must be run; the numbering above predates them.
   returned. Bills with a pending or approved return are refused. It replaces an
   unapplied draft, `schema-38-delete-bills-range.sql`, and drops that draft's
   functions if they exist. Safe to re-run.
+- **backend/src/db/schema-39-go-live-hardening.sql** — run after schema-38.
+  Replaces `create_bill_atomic()` with two refusals the API also makes first:
+  `DISCOUNT_EXCEEDS_TOTAL` (a discount larger than the bill stored a negative
+  sale, because `bills_with_totals` has no floor) and `EXPIRED_STOCK` (checked
+  against `pharmacy_today()`; the old function never looked at expiry). Then
+  revokes EXECUTE from `public`, `anon` and `authenticated` on every function in
+  `public` that is not an extension's, and grants it to `service_role` — except
+  `delete_bills_core`, which schema-38 leaves ungranted. Earlier files revoked
+  only from `anon`, which `anon` still inherits through `public`, so the anon key
+  could call `match_medicines_trgm` and `is_owner`, and nothing had revoked the
+  `next_*_number()` functions at all. The file ends by checking that nothing in
+  `public` is still executable by `anon` or `authenticated`, and rolls back if
+  anything is. Changes no table, view or row; no API restart needed; safe to
+  re-run. **A function added after this file must revoke from `public`, not only
+  `anon` — or re-run this file.**
 
 ## Module 23 also needs, outside SQL:
 - `GEMINI_API_KEY` in backend/.env (see backend/.env.example). Without it the

@@ -16,10 +16,11 @@ const overview = asyncHandler(async (req, res) => {
   return ApiResponse.success(res, result);
 });
 
-// Batches for a medicine
+// Batches for a medicine. The actor decides the columns: staff get no cost or
+// supplier fields (A9).
 const batchesForMedicine = asyncHandler(async (req, res) => {
   const includeExpired = req.user.role === 'owner' && req.query.includeExpired === 'true';
-  const batches = await svc.listBatchesForMedicine(req.params.medicineId, { includeExpired });
+  const batches = await svc.listBatchesForMedicine(req.params.medicineId, req.user, { includeExpired });
   return ApiResponse.success(res, { batches });
 });
 

@@ -3,6 +3,7 @@
 
 const express = require('express');
 const multer = require('multer');
+const rateLimit = require('express-rate-limit');
 const { body, param, query } = require('express-validator');
 const controller = require('./supplier-invoices.controller');
 const config = require('../../config/env');
@@ -55,6 +56,58 @@ const acceptUpload = (req, res, next) => uploadHandler(req, res, (err) => {
   }
   return next(err);
 });
+
+// ── Upload guards ─────────────────────────────────────────
+//
+// Every accepted upload is a paid Gemini call, and the whole file sits in
+// memory, and again as base64, for as long as the read takes. The API-wide
+// limiter in app.js (900 requests per 15 minutes) bounds neither.
+//
+// Keyed on the USER, not the IP: the whole pharmacy shares one shop IP, which
+// is exactly why app.js had to raise its login limiter to 40. Keyed on the IP,
+// one busy morning of deliveries would lock every account out at once.
+const uploadLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: config.invoices.uploadsPerHour,
+  keyGenerator: (req) => req.user.id,
+  message: {
+    error: 'RATE_LIMITED',
+    message: `No more than ${config.invoices.uploadsPerHour} invoice uploads an hour. Try again a little later.`,
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// A cap on reads in progress across the whole process: the memory half of the
+// problem, which a per-user count cannot bound. An upload that arrives while the
+// cap is reached is told to wait rather than queued, because a queued upload is
+// exactly the buffer this exists not to hold.
+//
+// 'finish' and 'close' can both fire for one response, so the slot is released
+// once. It is released on 'close' as well because a client that hangs up never
+// produces a 'finish', and a slot that is never freed would refuse every later
+// upload until a restart. The price: after a hang-up the abandoned read carries
+// on server-side while a new one may start, so the cap can briefly be exceeded.
+// That is the better of the two failures.
+let extractionsInFlight = 0;
+const extractionSlot = (req, res, next) => {
+  if (extractionsInFlight >= config.invoices.maxConcurrentExtractions) {
+    return next(new AppError(
+      'Another invoice is being read right now. Upload this one when it finishes.',
+      429, 'EXTRACTION_BUSY'
+    ));
+  }
+  extractionsInFlight += 1;
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    extractionsInFlight -= 1;
+  };
+  res.once('finish', release);
+  res.once('close', release);
+  return next();
+};
 
 // ── Validation ────────────────────────────────────────────
 
@@ -328,7 +381,8 @@ router.get('/match/medicines',           [query('q').trim().notEmpty().isLength(
 router.get('/:id',                       uid(), validate, controller.getOne);
 router.get('/:id/document',              uid(), validate, controller.document);
 
-router.post('/',                         acceptUpload, controller.upload);
+// Guards before multer, so an upload that will be refused is never buffered.
+router.post('/',                         uploadLimiter, extractionSlot, acceptUpload, controller.upload);
 
 router.patch('/:id',                     uid(), updateInvoiceRules, validate, controller.update);
 router.patch('/:id/items/:itemId',       [...uid(), ...uid('itemId')], updateItemRules, validate, controller.updateItem);

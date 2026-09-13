@@ -8,21 +8,10 @@
          the browser chrome cannot read a CSS variable. -->
     <meta name="theme-color" content="#EFF4F1" />
     <title>P.Care Pharma</title>
-    <script>
-      (function() {
-        try {
-          var theme = localStorage.getItem('pcare.theme');
-          var isDark = theme === 'dark' || ((!theme || theme === 'system') && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
-          if (theme === 'dark' || theme === 'light') {
-            document.documentElement.dataset.theme = theme;
-          }
-          var metaThemeColor = document.querySelector('meta[name="theme-color"]');
-          if (metaThemeColor) {
-            metaThemeColor.setAttribute('content', isDark ? '#0F1714' : '#EFF4F1');
-          }
-        } catch (e) {}
-      })();
-    </script>
+    <!-- Theme before first paint. A file, not an inline script: the Content-Security-Policy
+         (helmet in backend/src/app.js, and nginx.conf.template) is script-src 'self', which
+         blocks inline scripts. Plain rather than type="module", because modules are deferred. -->
+    <script src="/theme-init.js"></script>
   </head>
   <body>
     <div id="root"></div>

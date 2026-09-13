@@ -39,7 +39,26 @@ const stockRequisitionsRoutes = require('./modules/stock-requisitions/stock-requ
 const app = express();
 
 // ── Security headers
-app.use(helmet());
+// helmet's defaults, widened for one origin. Module 23's review screen shows
+// the original invoice in an <iframe> (PDF) or an <img>, from a short-lived
+// signed Supabase Storage URL; the default policy (img-src 'self' data:, and
+// frame-src falling back to default-src 'self') blocks both whenever this
+// server serves the frontend itself. nginx.conf.template sends the same two
+// allowances for the nginx-served deploy — keep them in step.
+//
+// upgrade-insecure-requests only in production. Over plain http it rewrites
+// every asset URL to https, so a server tested by IP before its certificate
+// exists loads a blank page.
+const supabaseOrigin = new URL(config.supabase.url).origin;
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      'img-src': ["'self'", 'data:', supabaseOrigin],
+      'frame-src': ["'self'", supabaseOrigin],
+      'upgrade-insecure-requests': config.isProduction ? [] : null,
+    },
+  },
+}));
 app.set('trust proxy', 1); // behind nginx
 
 // ── CORS — locked to frontend origin

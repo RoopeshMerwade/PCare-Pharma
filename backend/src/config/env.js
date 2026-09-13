@@ -3,7 +3,14 @@
 // transport selection). Validates at require time and fails fast with a
 // friendly message BEFORE any module tries to use a missing value.
 
-require('dotenv').config();
+const path = require('path');
+
+// By absolute path, not dotenv's default of `<process.cwd()>/.env`. PM2 runs
+// server.js from the repository root, where ecosystem.config.js lives, so the
+// default looked for a .env that is not there and the API refused to boot with
+// every required variable "missing". A variable already set in the environment
+// still wins: dotenv never overwrites one.
+require('dotenv').config({ path: path.resolve(__dirname, '../../.env') });
 
 const REQUIRED = ['SUPABASE_URL', 'SUPABASE_SERVICE_KEY', 'SUPABASE_ANON_KEY', 'FRONTEND_URL'];
 const VALID_ENVS = ['development', 'test', 'production'];
@@ -27,6 +34,32 @@ try {
   fatal('SUPABASE_URL is not a valid URL');
 }
 
+// FRONTEND_URL is the CORS origin AND the base of every password-reset link
+// (auth.service.js, users.service.js). A trailing slash makes the origin never
+// match a browser's Origin header and doubles the slash in the link, so it is
+// stripped here rather than left for each caller to get right.
+const frontendUrl = process.env.FRONTEND_URL.replace(/\/+$/, '');
+let frontendHost = null;
+let frontendProtocol = null;
+try {
+  ({ hostname: frontendHost, protocol: frontendProtocol } = new URL(frontendUrl));
+} catch {
+  fatal('FRONTEND_URL is not a valid URL');
+}
+
+// A development .env copied onto a server boots cleanly and is wrong in two
+// ways nobody notices until a customer does: password-reset emails link to
+// localhost, and without https the refresh cookie (Secure in production) is
+// never stored, so every session ends at the first access-token expiry.
+if (nodeEnv === 'production') {
+  if (frontendProtocol !== 'https:') {
+    fatal(`FRONTEND_URL must be an https:// address in production, got "${frontendUrl}"`);
+  }
+  if (['localhost', '127.0.0.1', '[::1]'].includes(frontendHost)) {
+    fatal(`FRONTEND_URL points at this machine ("${frontendUrl}"). Set it to the public site address.`);
+  }
+}
+
 const port = parseInt(process.env.PORT, 10) || 4000;
 
 const intFromEnv = (key, fallback) => {
@@ -40,7 +73,7 @@ const config = {
   port,
   appVersion: process.env.APP_VERSION || '1.0.0',
   logLevel: process.env.LOG_LEVEL || 'info',
-  frontendUrl: process.env.FRONTEND_URL,
+  frontendUrl,
   supabase: {
     url: process.env.SUPABASE_URL,
     serviceKey: process.env.SUPABASE_SERVICE_KEY,
@@ -81,6 +114,11 @@ const config = {
     // inflates by a third — so the file itself has to stay comfortably under it.
     maxUploadBytes: intFromEnv('INVOICE_MAX_UPLOAD_MB', 12) * 1024 * 1024,
     signedUrlTtlSeconds: intFromEnv('INVOICE_SIGNED_URL_TTL', 900),
+    // Each accepted upload is a paid Gemini call and a buffer of up to
+    // maxUploadBytes held in memory for the whole read. See the upload guards
+    // in supplier-invoices.routes.js for why there are two limits.
+    uploadsPerHour: intFromEnv('INVOICE_UPLOADS_PER_HOUR', 10),
+    maxConcurrentExtractions: intFromEnv('INVOICE_MAX_CONCURRENT_EXTRACTIONS', 1),
   },
 };
 

@@ -72,11 +72,15 @@ const movementsQuery = [
 
 // ── Routes
 
-// Both roles: inventory overview and batch reads
+// Both roles: inventory overview and batch reads. The batch list is shaped by
+// role in the service — a staff session gets no cost or supplier columns (A9).
 router.get('/', overviewQuery, validate, controller.overview);
 router.get('/:medicineId/batches', uuidParam('medicineId'), validate, controller.batchesForMedicine);
 router.get('/:medicineId/available-batches', uuidParam('medicineId'), validate, controller.availableBatches);
-router.get('/batch/:batchId', uuidParam('batchId'), validate, controller.getBatch);
+
+// Owner only: one batch is the whole inventory_batches row, unit_cost and
+// supplier_id included, and no staff screen reads it.
+router.get('/batch/:batchId', authorize('owner'), uuidParam('batchId'), validate, controller.getBatch);
 
 // Both roles: adding a batch (staff do the unboxing)
 router.post('/batches', addBatchRules, validate, controller.addBatch);

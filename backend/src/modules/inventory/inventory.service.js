@@ -6,6 +6,7 @@ const { hasLooseUnits } = require('../../config/capabilities');
 const { AppError } = require('../../utils/AppError');
 const { logAudit } = require('../../utils/audit');
 const { applySearch, paginationMeta } = require('../../utils/postgrest');
+const { getISTDateString } = require('../../utils/date');
 const logger = require('../../utils/logger');
 
 const VALID_REASONS = ['purchase_receipt','opening_stock','sale','return_inward','return_outward','adjustment','expiry_writeoff','strip_opened'];
@@ -20,18 +21,50 @@ const VALID_LOOSE_REASONS = ['strip_opened','sale','return_inward','adjustment',
 // BATCHES — READ
 // ────────────────────────────────────────────────
 
-async function listBatchesForMedicine(medicineId, { includeExpired = false } = {}) {
+// What a staff session may see of a batch (criterion A9): the fields
+// BatchDrawer's batch card renders for staff, and nothing else. An ALLOW-list,
+// so a column added to batches_with_stock later stays out of staff responses
+// until someone decides otherwise — the direction an accident should fail in.
+// unit_cost, supplier_id, po_id and created_by are the reason it exists.
+const STAFF_BATCH_COLUMNS = [
+  'id', 'medicine_id', 'batch_no', 'mfg_date', 'exp_date', 'mrp', 'selling_price',
+  'medicine_name', 'medicine_unit', 'stock_qty', 'expiry_status',
+];
+// schema-27's columns, requested only where that migration is present — the
+// same gate getAvailableBatchesFEFO uses.
+const STAFF_LOOSE_BATCH_COLUMNS = [
+  'sealed_qty', 'loose_qty', 'effective_content_quantity', 'effective_content_unit', 'loose_sale_supported',
+];
+
+const pick = (row, keys) => Object.fromEntries(keys.filter((k) => k in row).map((k) => [k, row[k]]));
+
+/**
+ * Every batch of one medicine, shaped by who is asking.
+ *
+ * `actor` is req.user and is REQUIRED. An optional actor would let a future
+ * caller leave it out and quietly receive the owner's view, cost included.
+ */
+async function listBatchesForMedicine(medicineId, actor, { includeExpired = false } = {}) {
+  if (!actor?.role) throw new AppError('Authorisation context missing.', 500, 'ACTOR_REQUIRED');
+  const isOwner = actor.role === 'owner';
+  const staffColumns = isOwner
+    ? null
+    : [...STAFF_BATCH_COLUMNS, ...((await hasLooseUnits()) ? STAFF_LOOSE_BATCH_COLUMNS : [])];
+
   let query = supabase
     .from('batches_with_stock')
-    .select('*')
+    .select(isOwner ? '*' : staffColumns.join(', '))
     .eq('medicine_id', medicineId)
     .order('exp_date', { ascending: true });
 
-  if (!includeExpired) query = query.gte('exp_date', new Date().toISOString().slice(0, 10));
+  if (!includeExpired) query = query.gte('exp_date', getISTDateString());
 
   const { data, error } = await query;
   if (error) throw new AppError('Failed to fetch batches.', 500, 'DB_ERROR');
-  return data;
+  if (isOwner) return data;
+  // The select already keeps cost inside Postgres. This keeps it out of the
+  // response even if that select is ever widened back to '*'.
+  return (data || []).map((row) => pick(row, staffColumns));
 }
 
 // FEFO: batches with stock > 0, nearest expiry first
@@ -57,7 +90,7 @@ async function getAvailableBatchesFEFO(medicineId) {
         : 'id, batch_no, exp_date, mrp, selling_price, stock_qty, expiry_status'
     )
     .eq('medicine_id', medicineId)
-    .gte('exp_date', new Date().toISOString().slice(0, 10)) // exclude expired
+    .gte('exp_date', getISTDateString()) // exclude expired
     .order('exp_date', { ascending: true });
 
   query = migrated
@@ -156,7 +189,7 @@ async function getInventoryOverview({ search, categoryId, stockFilter, page = 1,
 
 // Expired batches — owner dashboard
 async function getExpiredBatches() {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = getISTDateString();
   const { data, error } = await supabase
     .from('batches_with_stock')
     .select('*')
@@ -183,7 +216,7 @@ async function addBatch({ medicine_id, batch_no, mfg_date, exp_date, unit_cost, 
   }
 
   // Validate exp_date is in the future
-  if (exp_date <= new Date().toISOString().slice(0, 10)) {
+  if (exp_date <= getISTDateString()) {
     throw new AppError('Batch expiry date must be in the future.', 422, 'EXPIRED_BATCH');
   }
 
@@ -317,7 +350,7 @@ async function adjustStock({ batch_id, adjustment_qty, note, denomination = 'sea
 // unsellable, invisible to the sealed write-off, and still counted as an asset.
 async function writeOffExpiredBatch(batchId, requestingUserId) {
   const batch = await getBatchById(batchId);
-  const today = new Date().toISOString().slice(0, 10);
+  const today = getISTDateString();
   const looseQty = Number(batch.loose_qty) || 0;
 
   if (batch.exp_date >= today) throw new AppError('Batch has not expired yet. Use stock adjustment if needed.', 422, 'BATCH_NOT_EXPIRED');

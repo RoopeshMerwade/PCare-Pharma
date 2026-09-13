@@ -71,6 +71,17 @@ describe('mapDbError', () => {
     expect(err.message).not.toMatch(/delete_bills_core/);
   });
 
+  // schema-39: create_bill_atomic's own refusals. Reaching them means the
+  // service's check was raced or bypassed; neither may surface as a 500.
+  test.each([
+    ['DISCOUNT_EXCEEDS_TOTAL', 422],
+    ['EXPIRED_STOCK', 409],
+  ])('maps schema-39 %s to %i', (code, status) => {
+    const err = mapDbError({ message: `${code}: raised inside create_bill_atomic` });
+    expect([err.statusCode, err.code]).toEqual([status, code]);
+    expect(err.message).not.toMatch(/create_bill_atomic/);
+  });
+
   test('never leaks raw database messages: unknown errors return null', () => {
     expect(mapDbError({ message: 'connection reset by peer' })).toBeNull();
     expect(mapDbError(null)).toBeNull();

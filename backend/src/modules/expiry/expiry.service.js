@@ -5,6 +5,7 @@ const { AppError } = require('../../utils/AppError');
 const { logAudit } = require('../../utils/audit');
 const { appendLedger } = require('../inventory/inventory.service');
 const { paginationMeta } = require('../../utils/postgrest');
+const { getISTDateString } = require('../../utils/date');
 const logger = require('../../utils/logger');
 
 const URGENCIES = ['expired', 'critical', 'warning', 'watch'];
@@ -80,7 +81,7 @@ async function getBatchesByUrgency(urgency) {
 
 // ── WRITE OFF EXPIRED BATCH (delegates to inventory module)
 async function writeOffBatch(batchId, userId) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = getISTDateString();
 
   const { data: batch } = await supabase.from('batches_with_stock').select('*').eq('id', batchId).single();
   if (!batch) throw new AppError('Batch not found.', 404, 'BATCH_NOT_FOUND');
@@ -117,7 +118,7 @@ async function bulkWriteOffExpired(userId) {
 
 // ── EXPIRY REPORT (summary for period)
 async function getExpiryReport() {
-  const today = new Date().toISOString().slice(0,10);
+  const today = getISTDateString();
   const d90 = new Date(); d90.setDate(d90.getDate() + 90);
 
   const { data } = await supabase.from('expiry_summary').select('urgency, potential_loss_value, medicine_name, batch_no, exp_date, stock_qty, unit').order('exp_date');

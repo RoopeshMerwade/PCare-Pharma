@@ -61,6 +61,13 @@ const RPC_ERROR_MAP = {
   NO_BILLS_IN_RANGE:  [404, 'NO_BILLS_IN_RANGE', 'There are no bills in that date range.'],
   RANGE_CHANGED:      [409, 'RANGE_CHANGED', 'The bills in that range changed since you previewed them. Preview again.'],
   RANGE_TOO_LARGE:    [422, 'RANGE_TOO_LARGE', 'Delete at most 1000 bills at once. Choose a shorter date range.'],
+
+  // ── schema-39: create_bill_atomic's own refusals. The service checks the
+  // discount first and FEFO never offers an expired batch, so reaching either
+  // means that check was raced — a batch crossing midnight IST between the
+  // stock read and the commit — or bypassed.
+  DISCOUNT_EXCEEDS_TOTAL: [422, 'DISCOUNT_EXCEEDS_TOTAL', 'The discount cannot be more than the bill total.'],
+  EXPIRED_STOCK:          [409, 'EXPIRED_STOCK', 'A batch in this bill has just expired. Start the bill again to pick current stock.'],
 };
 
 // Returns an AppError for a Supabase/Postgres error, or null if unrecognized

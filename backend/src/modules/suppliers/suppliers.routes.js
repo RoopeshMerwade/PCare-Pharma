@@ -54,8 +54,15 @@ const listQuery = [
 //
 // No authorize('owner'): staff reach this through BatchDrawer's Add Batch form.
 router.get('/options',        controller.options);
-router.get('/',               listQuery, validate, controller.list);
-router.get('/:id',            uid, validate, controller.getOne);
+
+// Owner only, both of them. The list merges supplier_balances — what the
+// pharmacy has bought from and paid each distributor — and staff are shown
+// purchase money nowhere else (criterion A9). No staff screen reads either
+// route: every supplier dropdown staff can reach uses /options above. Refused
+// at the route rather than trimmed in the service, so the figures never leave
+// the API for a staff session at all.
+router.get('/',               authorize('owner'), listQuery, validate, controller.list);
+router.get('/:id',            authorize('owner'), uid, validate, controller.getOne);
 router.post('/',              authorize('owner'), createRules, validate, controller.create);
 router.patch('/:id',          authorize('owner'), uid, validate, controller.update);
 router.patch('/:id/deactivate', authorize('owner'), uid, validate, controller.deactivate);

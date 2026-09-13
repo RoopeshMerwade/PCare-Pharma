@@ -240,7 +240,11 @@ module.exports = {
     description: 'In-stock, unexpired batches, nearest expiry first â€” the same ordering billing consumes. Read-only view of what a sale would pick.',
     pathVars: { medicineId: 'medicine_id' },
   },
-  'GET /api/v1/inventory/batch/:batchId': { name: 'Get batch', pathVars: { batchId: 'batch_id' } },
+  'GET /api/v1/inventory/batch/:batchId': {
+    name: 'Get batch', role: OWNER,
+    description: 'The whole batch row, `unit_cost` and `supplier_id` included. Staff read batches through `GET /inventory/:medicineId/batches`, which leaves cost and supplier columns out of a staff response.',
+    pathVars: { batchId: 'batch_id' },
+  },
   'POST /api/v1/inventory/batches': {
     name: 'Add batch (opening stock)',
     description:
@@ -285,7 +289,7 @@ module.exports = {
 
   // â”€â”€ Suppliers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   'GET /api/v1/suppliers': {
-    name: 'List suppliers',
+    name: 'List suppliers', role: OWNER,
     description:
       'Paginated: `{ suppliers, pagination }`. Outstanding balances are merged in from the `supplier_balances` view — ' +
       'computed live, never stored — and are now fetched only for the ids ON THIS PAGE. That view aggregates every ' +
@@ -314,7 +318,7 @@ module.exports = {
       'and answers 422 about a malformed identifier — a routing bug wearing a validation bug\'s clothes. ' +
       '`tests/pagination-routes.test.js` guards it.',
   },
-  'GET /api/v1/suppliers/:id': { name: 'Get supplier', pathVars: { id: 'supplier_id' } },
+  'GET /api/v1/suppliers/:id': { name: 'Get supplier', role: OWNER, pathVars: { id: 'supplier_id' } },
   'POST /api/v1/suppliers': {
     name: 'Create supplier', role: OWNER,
     description:
@@ -468,6 +472,7 @@ module.exports = {
       '2. **Duplicate lines merged.** Two lines for the same medicine are summed before allocation, so a cart cannot oversell one batch.\n' +
       '3. **FEFO allocation.** Nearest-expiry batch first, spilling into the next as needed. Staff never pick a batch.\n' +
       '4. **`create_bill_atomic()`** â€” one transaction that locks the batches, writes the bill, its items and the negative ledger entries.\n\n' +
+      '`discount_amount` may not exceed the bill\'s subtotal: a larger one answers `422 DISCOUNT_EXCEEDS_TOTAL`, naming both amounts. Expiry is judged by the IST date, and a batch that expires between allocation and commit is refused with `409 EXPIRED_STOCK` (migration `schema-39-go-live-hardening.sql`).\n\n' +
       'Prices are snapshotted per batch at sale time. **Bills cannot be edited** â€” there is no PATCH, and corrections go through Customer Returns. The one exception is the owner deleting bills outright (`POST /api/v1/billing/:id/delete`, or by date range), which never returns stock.\n\n' +
       '**Two denominations per line (Module 27).** `qty` counts whole sealed packs â€” strips, bottles, tubes â€” and is the denomination `inventory_ledger` and `medicines.unit` have always used. `loose_qty` counts single units out of an opened pack and is optional; omitting it is exactly the request this endpoint took before, and behaves identically.\n\n' +
       'A line needs a quantity in at least one of the two, and `qty` may be `0` when `loose_qty` is not. Loose units are only accepted for a medicine whose pack contents are **countable** â€” `pack_content_unit` of TABLET, CAPSULE or PIECE. A 100ML bottle or a 30GM tube answers `422 LOOSE_SALE_UNSUPPORTED`, because one millilitre is not a thing anyone dispenses.\n\n' +
