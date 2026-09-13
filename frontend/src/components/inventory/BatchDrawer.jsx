@@ -440,7 +440,9 @@ function AddBatchModal({ medicine, open, onOpenChange, onAdded }) {
     let cancelled = false;
     (async () => {
       try {
-        const res = await api.get('/suppliers');
+        // /options, not /suppliers: this <select> reads id and name only, and
+        // the list endpoint now paginates.
+        const res = await api.get('/suppliers/options');
         if (!cancelled) setSuppliers(res.data.suppliers || []);
       } catch {
         if (!cancelled) setSuppliers([]);

@@ -73,44 +73,114 @@ async function getMarginReport({ categoryId, limit = 50 } = {}) {
   return { medicines: data, summary, generated_at: new Date().toISOString() };
 }
 
+// How many detail rows a report ships. A report is read, not paged through —
+// the summary above each table covers the whole range, and the table is the
+// worst offenders. Both are response-shaping numbers, not business rules.
+const PURCHASE_DETAIL_LIMIT = 100;
+const REORDER_LIMIT = 100;
+
 // ── VENDOR / PURCHASE REPORT
-async function getPurchaseReport({ supplierId, dateFrom, dateTo } = {}) {
+async function getPurchaseReport({ supplierId, dateFrom, dateTo, detailLimit = PURCHASE_DETAIL_LIMIT } = {}) {
   const from = dateFrom || getISTDaysAgo(90);
   const to   = dateTo   || getISTDateString();
 
-  let q = supabase.from('purchases_with_totals').select('*')
-    .gte('created_at', getISTStartOfDay(from)).lte('created_at', getISTEndOfDay(to))
-    .order('created_at', { ascending: false });
-  if (supplierId) q = q.eq('supplier_id', supplierId);
-
-  const { data, error } = await q;
-  if (error) throw new AppError('Failed to generate purchase report.', 500, 'DB_ERROR');
-
-  const summary = {
-    total_orders:   data.length,
-    total_ordered:  data.reduce((s,r) => s + parseFloat(r.ordered_total||0), 0),
-    total_received: data.reduce((s,r) => s + parseFloat(r.received_total||0), 0),
-    received_count: data.filter(r => r.status === 'received').length,
-    pending_count:  data.filter(r => r.status === 'sent').length,
+  const inRange = (columns) => {
+    const q = supabase.from('purchases_with_totals').select(columns)
+      .gte('created_at', getISTStartOfDay(from)).lte('created_at', getISTEndOfDay(to));
+    return supplierId ? q.eq('supplier_id', supplierId) : q;
   };
 
-  return { purchases: data, summary, dateFrom: from, dateTo: to, generated_at: new Date().toISOString() };
+  const [aggRes, detailRes] = await Promise.all([
+    // Whole range, FOUR columns. The summary has to cover every order in the
+    // window or the three stat tiles are wrong, and PurchaseFlowCard buckets
+    // by month over the same set — a bounded list would silently under-plot
+    // the chart, which is worse than a wrong number because it looks right.
+    inRange('created_at, ordered_total, received_total, status'),
+    inRange('*').order('created_at', { ascending: false }).limit(detailLimit),
+  ]);
+  if (aggRes.error) throw new AppError('Failed to generate purchase report.', 500, 'DB_ERROR');
+
+  const all = aggRes.data || [];
+  const summary = {
+    total_orders:   all.length,
+    total_ordered:  all.reduce((s,r) => s + parseFloat(r.ordered_total||0), 0),
+    total_received: all.reduce((s,r) => s + parseFloat(r.received_total||0), 0),
+    received_count: all.filter(r => r.status === 'received').length,
+    pending_count:  all.filter(r => r.status === 'sent').length,
+  };
+
+  return {
+    purchases: detailRes.data || [],   // bounded — the table
+    purchases_total: summary.total_orders,
+    flow: all,                         // whole range — the chart
+    summary, dateFrom: from, dateTo: to, generated_at: new Date().toISOString(),
+  };
 }
 
 // ── INVENTORY SNAPSHOT
-async function getInventoryReport() {
-  const { data, error } = await supabase.from('medicines_with_stock').select('*').eq('is_active', true).order('name');
-  if (error) throw new AppError('Failed to generate inventory report.', 500, 'DB_ERROR');
+/**
+ * Catalogue health, counted in the database, plus the reorder list.
+ *
+ * This used to fetch the whole active catalogue and make four Array.filter
+ * passes over it, and the FRONTEND then filtered the same array again into
+ * "Needs reordering". Both halves now happen server-side: five head-counts
+ * that move no rows, and one bounded query for the list itself.
+ */
+async function getInventoryReport({ reorderLimit = REORDER_LIMIT } = {}) {
+  const HEAD = { count: 'exact', head: true };
+  // A factory: postgrest-js filter methods mutate the builder in place, so a
+  // shared instance would have each count inherit the previous one's filters.
+  const scope = () => supabase.from('medicines_with_stock').select('*', HEAD).eq('is_active', true);
 
-  const summary = {
-    total_medicines: data.length,
-    out_of_stock:    data.filter(m => m.total_stock <= 0).length,
-    low_stock:       data.filter(m => m.is_low_stock && m.total_stock > 0).length,
-    near_expiry:     data.filter(m => m.near_expiry_batch_count > 0).length,
-    healthy:         data.filter(m => !m.is_low_stock && m.total_stock > 0).length,
+  const [totalRes, outRes, lowRes, nearRes, reorderRes] = await Promise.all([
+    scope(),
+    scope().lte('total_stock', 0),
+    scope().eq('is_low_stock', true).gt('total_stock', 0),
+    scope().gt('near_expiry_batch_count', 0),
+    // BOTH halves of the predicate this replaces, deliberately.
+    //
+    // is_low_stock is `coalesce(total_stock,0) < low_stock_threshold`, which is
+    // TRUE at zero stock for any normal threshold — so `is_low_stock` alone
+    // looks like it already covers "out of stock". It does not: the column has
+    // `check (low_stock_threshold >= 0)`, and at a threshold of 0 a medicine
+    // with no stock gives `0 < 0` = FALSE. That row belongs at the top of a
+    // reorder list and would have been silently dropped from it.
+    supabase.from('medicines_with_stock')
+      .select('id, name, unit, category_name, category_color, total_stock, low_stock_threshold, is_low_stock, near_expiry_batch_count', { count: 'exact' })
+      .eq('is_active', true)
+      .or('is_low_stock.eq.true,total_stock.lte.0')
+      .order('total_stock', { ascending: true })
+      .order('id', { ascending: true })
+      .limit(reorderLimit),
+  ]);
+
+  if (totalRes.error) throw new AppError('Failed to generate inventory report.', 500, 'DB_ERROR');
+
+  const total = totalRes.count ?? 0;
+  const out   = outRes.count ?? 0;
+  const low   = lowRes.count ?? 0;
+
+  return {
+    summary: {
+      total_medicines: total,
+      out_of_stock: out,
+      low_stock: low,
+      near_expiry: nearRes.count ?? 0,
+      // Subtracted rather than counted, and it is exact.
+      // `low_stock_threshold` is NOT NULL and total_stock is coalesced, so
+      // is_low_stock is a total boolean — {stock <= 0}, {stock > 0 AND low}
+      // and {stock > 0 AND NOT low} partition the catalogue with nothing left
+      // over. That last set is what `healthy` meant before. Counting it
+      // separately would cost a fifth round trip to learn the same number, and
+      // would let rounding between five independent counts leave
+      // StockHealthCard's bar not summing to the catalogue — the one invariant
+      // that card depends on.
+      healthy: Math.max(0, total - out - low),
+    },
+    reorder: reorderRes.data || [],
+    reorder_total: reorderRes.count ?? (reorderRes.data || []).length,
+    generated_at: new Date().toISOString(),
   };
-
-  return { medicines: data, summary, generated_at: new Date().toISOString() };
 }
 
 // ── TOP SELLING MEDICINES (for dashboard widget)

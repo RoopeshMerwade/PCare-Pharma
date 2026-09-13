@@ -109,4 +109,17 @@
       radial-gradient(rgb(var(--color-surface-strong) / 0.18) 1px, transparent 1.6px);
     background-size: auto, 24px 24px;
   }
+
+  .mobile-edge-image {
+    width: calc(100% + (2 * var(--space-4)));
+    max-width: none;
+    margin-left: calc(-1 * var(--space-4));
+  }
+
+  @media (min-width: 640px) {
+    .mobile-edge-image {
+      width: calc(100% + (2 * var(--space-6)));
+      margin-left: calc(-1 * var(--space-6));
+    }
+  }
 }

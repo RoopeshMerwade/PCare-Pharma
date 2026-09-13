@@ -45,7 +45,8 @@ export default function SupplierInvoicesPage() {
   });
 
   useEffect(() => {
-    api.get('/suppliers').then((res) => setSuppliers(res.data.suppliers || [])).catch(() => {});
+    // /options: passed straight down to UploadInvoiceDialog's <select>.
+    api.get('/suppliers/options').then((res) => setSuppliers(res.data.suppliers || [])).catch(() => {});
   }, []);
 
   const columns = [

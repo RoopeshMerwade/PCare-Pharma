@@ -139,7 +139,8 @@ function CreateSupplierReturnModal({ open, onOpenChange, onCreated }) {
     if (!open) return;
     setSupplierId(''); setSearch(''); setBatches([]); setItems([]);
     setReason(''); setNotes(''); setErrors({});
-    api.get('/suppliers').then((r) => setSuppliers(r.data.suppliers)).catch(() => {});
+    // /options: id + name for the dropdown. The list endpoint paginates now.
+    api.get('/suppliers/options').then((r) => setSuppliers(r.data.suppliers)).catch(() => {});
   }, [open]);
 
   useEffect(() => {

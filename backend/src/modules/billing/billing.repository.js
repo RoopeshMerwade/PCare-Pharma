@@ -100,7 +100,54 @@ async function createBillAtomic(bill, items) {
   return billId;
 }
 
+// ── Owner bill deletion (schema-38). Every call is an RPC, so the IST day
+// window, the row locks and the audit row live in one place, in one transaction.
+
+function rpcError(error, fallbackMessage) {
+  return mapDbError(error) || new AppError(fallbackMessage, 500, 'DB_ERROR');
+}
+
+async function previewBillDeletion(billIds) {
+  const { data, error } = await supabase.rpc('preview_bill_deletion', { p_bill_ids: billIds });
+  if (error || !data) throw rpcError(error, 'Failed to preview the deletion.');
+  return data;
+}
+
+async function previewRangeDeletion(dateFrom, dateTo) {
+  const { data: ids, error } = await supabase.rpc('bills_in_ist_range', { p_from: dateFrom, p_to: dateTo });
+  if (error || !ids) throw rpcError(error, 'Failed to preview the deletion.');
+  return previewBillDeletion(ids);
+}
+
+async function deleteBillAtomic({ billId, actorId, reason, ip, userAgent }) {
+  const { data, error } = await supabase.rpc('delete_bill_atomic', {
+    p_bill_id: billId,
+    p_actor_id: actorId,
+    p_reason: reason,
+    p_ip: ip || null,
+    p_user_agent: userAgent || null,
+  });
+  if (error || !data) throw rpcError(error, 'Failed to delete the bill.');
+  return data;
+}
+
+async function deleteBillsInRangeAtomic({ dateFrom, dateTo, actorId, reason, expectedCount, expectedTotal, ip, userAgent }) {
+  const { data, error } = await supabase.rpc('delete_bills_in_range_atomic', {
+    p_from: dateFrom,
+    p_to: dateTo,
+    p_actor_id: actorId,
+    p_reason: reason,
+    p_expected_count: expectedCount,
+    p_expected_total: expectedTotal,
+    p_ip: ip || null,
+    p_user_agent: userAgent || null,
+  });
+  if (error || !data) throw rpcError(error, 'Failed to delete the bills.');
+  return data;
+}
+
 module.exports = {
   listBills, getBillWithTotals, getBillItems, getBillsInRange,
   getSalesTotalsSummary, getMedicineName, createBillAtomic,
+  previewBillDeletion, previewRangeDeletion, deleteBillAtomic, deleteBillsInRangeAtomic,
 };

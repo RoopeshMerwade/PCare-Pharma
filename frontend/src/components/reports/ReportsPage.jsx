@@ -324,7 +324,12 @@ function MarginsReport({ data, dimmed }) {
 
 function InventoryReport({ data }) {
   const summary = data.summary || {};
-  const needsAttention = (data.medicines || []).filter((m) => m.is_low_stock || m.total_stock <= 0);
+  /* The server now sends the reorder list already filtered and bounded. It
+     used to send the whole catalogue so this line could filter it here — the
+     predicate below is kept as the fallback, and is the same one the server
+     applies (`is_low_stock` is true at zero stock, so it covers "out" too). */
+  const needsAttention = data.reorder || (data.medicines || []).filter((m) => m.is_low_stock || m.total_stock <= 0);
+  const reorderTotal = data.reorder_total ?? needsAttention.length;
 
   return (
     <>
@@ -350,6 +355,11 @@ function InventoryReport({ data }) {
       />
 
       <h2 className="mb-s2 text-sm font-bold text-foreground">Needs reordering</h2>
+      {reorderTotal > needsAttention.length && (
+        <p className="mb-s2 text-base text-muted-foreground">
+          Showing the {count(needsAttention.length)} lowest-stock of {count(reorderTotal)}.
+        </p>
+      )}
       <Table
         columns={[
           {
@@ -376,6 +386,8 @@ function InventoryReport({ data }) {
 
 function PurchasesReport({ data, dimmed }) {
   const summary = data.summary || {};
+  const rows = data.purchases || [];
+  const purchasesTotal = data.purchases_total ?? rows.length;
   return (
     <>
       <StatGrid>
@@ -390,8 +402,16 @@ function PurchasesReport({ data, dimmed }) {
         </StatTile>
       </StatGrid>
 
-      <PurchaseFlowCard purchases={data.purchases} dimmed={dimmed} className="mb-s4" />
+      {/* `flow` is every order in the range (four columns); `purchases` is the
+          bounded table below. The chart must plot the whole window or it
+          under-reports a month while looking correct. */}
+      <PurchaseFlowCard purchases={data.flow || rows} dimmed={dimmed} className="mb-s4" />
 
+      {purchasesTotal > rows.length && (
+        <p className="mb-s2 text-base text-muted-foreground">
+          Showing the {count(rows.length)} most recent of {count(purchasesTotal)} orders. The figures above cover all of them.
+        </p>
+      )}
       <Table
         columns={[
           {
@@ -412,7 +432,7 @@ function PurchasesReport({ data, dimmed }) {
             render: (p) => <Money value={p.received_total || p.ordered_total} whole />,
           },
         ]}
-        rows={(data.purchases || []).map((p, i) => ({ ...p, id: p.id || i }))}
+        rows={rows.map((p, i) => ({ ...p, id: p.id || i }))}
         caption="Purchase orders in this date range"
         emptyTitle="No purchase orders in this date range"
         emptyBody="Widen the dates, or raise an order from the Purchase orders page."

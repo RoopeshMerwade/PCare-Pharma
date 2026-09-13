@@ -52,6 +52,16 @@ const adjustRules = [
     .withMessage('Denomination must be sealed or loose'),
 ];
 
+// Mirrors medicines.routes.js's listQuery. `stock` omits 'ok' — unlike
+// medicines, whose validator allows a value its service silently ignores.
+const overviewQuery = [
+  query('page').optional().isInt({ min: 1 }),
+  query('limit').optional().isInt({ min: 1, max: 100 }),
+  query('categoryId').optional().isUUID(),
+  query('stock').optional({ values: 'falsy' }).isIn(['low', 'out', 'near_expiry']),
+  query('search').optional().isLength({ max: 100 }),
+];
+
 const movementsQuery = [
   query('batchId').optional().isUUID(),
   query('medicineId').optional().isUUID(),
@@ -63,7 +73,7 @@ const movementsQuery = [
 // ── Routes
 
 // Both roles: inventory overview and batch reads
-router.get('/', controller.overview);
+router.get('/', overviewQuery, validate, controller.overview);
 router.get('/:medicineId/batches', uuidParam('medicineId'), validate, controller.batchesForMedicine);
 router.get('/:medicineId/available-batches', uuidParam('medicineId'), validate, controller.availableBatches);
 router.get('/batch/:batchId', uuidParam('batchId'), validate, controller.getBatch);

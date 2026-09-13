@@ -4,12 +4,16 @@
 const svc = require('./inventory.service');
 const { asyncHandler } = require('../../utils/asyncHandler');
 const { ApiResponse } = require('../../utils/ApiResponse');
+const { parsePagination } = require('../../utils/postgrest');
 
-// Overview
+// Overview. `total` used to be `inventory.length` — the length of an unbounded
+// fetch. It now lives in `pagination.total` as a real DB count, and the
+// catalogue-wide figures the page actually renders are in `stats`.
 const overview = asyncHandler(async (req, res) => {
   const { search, categoryId, stock } = req.query;
-  const inventory = await svc.getInventoryOverview({ search, categoryId, stockFilter: stock });
-  return ApiResponse.success(res, { inventory, total: inventory.length });
+  const { page, limit } = parsePagination(req.query, { defaultLimit: 30, maxLimit: 100 });
+  const result = await svc.getInventoryOverview({ search, categoryId, stockFilter: stock, page, limit });
+  return ApiResponse.success(res, result);
 });
 
 // Batches for a medicine

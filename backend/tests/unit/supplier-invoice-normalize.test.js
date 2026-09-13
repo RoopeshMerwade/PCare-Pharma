@@ -10,11 +10,13 @@
 
 const {
   normalizeExpiry, normalizeMfg, normalizeDate, normalizeAmount,
-  normalizeInt, normalizeBatchNo, normalizeGstin,
+  normalizeInt, normalizeBatchNo, normalizeGstin, normalizePhone,
   normalizeExtraction, totalUnits, totalContent, lineValue, printedLineValue,
   descriptionForMatching, parsePack, deriveSaleUnit,
   deriveUnitCost, deriveUnitMrp, perContentUnitPrice, rederiveLine,
 } = require('../../src/modules/supplier-invoices/supplier-invoices.normalize');
+// The destination rule for the same value — TC-INV-N19 pins the two together.
+const { isContactPhone } = require('../../src/utils/phone');
 
 describe('Module 23 — expiry normalisation', () => {
   test('TC-INV-N01: YYYY-MM becomes the LAST day of that month', () => {
@@ -171,6 +173,35 @@ describe('Module 23 — text fields', () => {
   test('TC-INV-N16: GSTIN is uppercased with spaces removed', () => {
     expect(normalizeGstin(' 29abcde1234f1z5 ')).toBe('29ABCDE1234F1Z5');
     expect(normalizeGstin(null)).toBeNull();
+  });
+
+  test('TC-INV-N17: the separator between two printed numbers survives', () => {
+    // MEDICO's letterhead reads "08373-266025, 261596" — an STD code and TWO
+    // local numbers. The old character class dropped "," and "/", welding them
+    // into 08373-266025261596: one 17-digit number that is not any number, and
+    // plausible enough to be approved and then never reach anybody.
+    expect(normalizePhone('08373-266025,261596')).toBe('08373-266025,261596');
+    expect(normalizePhone('08373-266025, 261596')).toBe('08373-266025, 261596');
+    expect(normalizePhone('0836-2661234 / 2661235')).toBe('0836-2661234 / 2661235');
+  });
+
+  test('TC-INV-N18: printed punctuation is kept, labels and letters are not', () => {
+    expect(normalizePhone('+91 (080) 2345-6789')).toBe('+91 (080) 2345-6789');
+    // Stripping a letter run from between two spaces must not leave a double.
+    expect(normalizePhone('Ph: 9845098450')).toBe('9845098450');
+    expect(normalizePhone('266025 and 261596')).toBe('266025 261596');
+    expect(normalizePhone('  ')).toBeNull();
+    expect(normalizePhone(null)).toBeNull();
+  });
+
+  test('TC-INV-N19: what survives extraction is accepted by POST /suppliers', () => {
+    // The review screen's "Add and link" posts this value verbatim into the
+    // suppliers table. If the two rules disagree, the reviewer gets a 422 on a
+    // field no screen lets them edit — which is exactly what happened.
+    const printed = ['08373-266025, 261596', '0836-2661234 / 2661235', '+91 (080) 2345-6789'];
+    for (const value of printed) {
+      expect(isContactPhone(normalizePhone(value))).toBe(true);
+    }
   });
 });
 

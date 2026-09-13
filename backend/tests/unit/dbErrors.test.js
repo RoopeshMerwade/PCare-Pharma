@@ -53,6 +53,24 @@ describe('mapDbError', () => {
     expect(err.message).not.toMatch(/printed_item_count/);
   });
 
+  // schema-38 owner bill deletion. Each code must reach the client as its own
+  // status: a raced return is a conflict to resolve, a changed range means
+  // "preview again", and none of them may surface as a bare 500.
+  test.each([
+    ['FORBIDDEN', 403],
+    ['REASON_REQUIRED', 422],
+    ['BILL_NOT_FOUND', 404],
+    ['BILL_HAS_RETURNS', 409],
+    ['INVALID_DATE_RANGE', 422],
+    ['NO_BILLS_IN_RANGE', 404],
+    ['RANGE_CHANGED', 409],
+    ['RANGE_TOO_LARGE', 422],
+  ])('maps schema-38 %s to %i', (code, status) => {
+    const err = mapDbError({ message: `${code}: raised inside delete_bills_core` });
+    expect([err.statusCode, err.code]).toEqual([status, code]);
+    expect(err.message).not.toMatch(/delete_bills_core/);
+  });
+
   test('never leaks raw database messages: unknown errors return null', () => {
     expect(mapDbError({ message: 'connection reset by peer' })).toBeNull();
     expect(mapDbError(null)).toBeNull();

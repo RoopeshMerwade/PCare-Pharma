@@ -35,22 +35,34 @@ export default function MedicinesPage() {
   const resource = useResource({
     endpoint: '/medicines',
     initialFilters: { search: '', categoryId: '', stock: '' },
-    select: (res) => ({ rows: res.data.medicines, pagination: res.data.pagination }),
+    select: (res) => ({
+      rows: res.data.medicines,
+      pagination: res.data.pagination,
+      meta: { stats: res.data.stats },
+    }),
   });
 
   useEffect(() => {
     api.get('/categories').then((r) => setCategories(r.data.categories)).catch(() => {});
   }, []);
 
-  // Summary counts computed from currently loaded rows
+  /* Catalogue-wide counts from the server. These tiles say "In Catalogue" and
+     "Out of Stock", and used to be computed from `resource.rows` — one page of
+     up to 15 medicines — so every figure but `total` described the page rather
+     than the catalogue it was labelled with.
+
+     The fallback is that old arithmetic, kept so the tiles degrade to
+     page-local numbers against an older backend instead of blanking. */
+  const serverStats = resource.meta?.stats;
   const stats = useMemo(() => {
     const rows = resource.rows || [];
-    const total = resource.pagination?.total ?? rows.length;
-    const low = rows.filter((m) => m.is_low_stock && Number(m.total_stock) > 0).length;
-    const out = rows.filter((m) => Number(m.total_stock) <= 0).length;
-    const active = rows.filter((m) => m.is_active).length;
-    return { total, low, out, active };
-  }, [resource.rows, resource.pagination]);
+    return {
+      total: serverStats?.total ?? resource.pagination?.total ?? rows.length,
+      low: serverStats?.low ?? rows.filter((m) => m.is_low_stock && Number(m.total_stock) > 0).length,
+      out: serverStats?.out ?? rows.filter((m) => Number(m.total_stock) <= 0).length,
+      active: serverStats?.active ?? rows.filter((m) => m.is_active).length,
+    };
+  }, [serverStats, resource.rows, resource.pagination]);
 
   const columns = visibleColumns(
     [

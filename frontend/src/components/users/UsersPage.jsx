@@ -14,6 +14,7 @@ import ErrorState from '../../ui/ErrorState';
 import { SkeletonRegion, SkeletonRows } from '../../ui/Skeleton';
 import { useToast } from '../../ui/Toast';
 import { PlusIcon } from '../../ui/icons';
+import { isSetupPending, SETUP_PENDING } from '../../domain/staff';
 
 const MAX_STAFF = 4;
 
@@ -144,7 +145,7 @@ export default function UsersPage() {
       <ConfirmDialog
         {...resetPassword.props}
         title={`Send a reset email to ${resetPassword.target?.full_name}?`}
-        body={`They'll get a link at ${resetPassword.target?.email} to set a new password. Their current password keeps working until they use it.`}
+        body={`They'll get a link at ${resetPassword.target?.email || 'their email address'} to set a new password. Their current password keeps working until they use it.`}
         confirmLabel="Send reset email"
         onConfirm={handleResetPassword}
       />
@@ -154,6 +155,7 @@ export default function UsersPage() {
 
 function UserRow({ user, onDeactivate, onActivate, onResetPassword }) {
   const isOwnerAccount = user.role === 'owner';
+  const setupPending = isSetupPending(user);
 
   return (
     // Stacked on phones (identity above, actions below), one line from sm up —
@@ -172,11 +174,14 @@ function UserRow({ user, onDeactivate, onActivate, onResetPassword }) {
           </span>
           <Badge tone={isOwnerAccount ? 'flag' : 'neutral'}>{isOwnerAccount ? 'Owner' : 'Staff'}</Badge>
           {!user.is_active && <Badge tone="critical">Deactivated</Badge>}
+          {setupPending && <Badge tone={SETUP_PENDING.tone}>{SETUP_PENDING.label}</Badge>}
         </div>
-        <p className="text-base text-muted-foreground">{user.email}</p>
+        {user.email && <p className="text-base text-muted-foreground">{user.email}</p>}
         {user.phone && <p className="text-base text-muted-foreground">{user.phone}</p>}
         <p className="text-base text-muted-foreground">
-          Last signed in: {user.last_login_at ? dateTime(user.last_login_at) : 'never'}
+          {setupPending
+            ? "Hasn't set a password or signed in yet"
+            : `Last signed in: ${user.last_login_at ? dateTime(user.last_login_at) : 'never'}`}
         </p>
       </div>
 

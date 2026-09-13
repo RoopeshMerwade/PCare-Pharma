@@ -1,6 +1,6 @@
 # P.Care Pharma — Database Migration Order
 ## Run ALL scripts in Supabase SQL Editor in this exact sequence
-### 18 files. Steps 1–11 create; steps 12–13 alter what step 11 created; step 14 is independent of Module 23 and only needs steps 1, 8 and 9; step 15 runs last among the schema files and touches steps 4, 5, 6, 7, 10 and 13; step 16 is security hardening that depends only on step 1 and that nothing else depends on; step 17 is the RLS lockdown, which depends on nothing and touches no object — run it after every schema file so it is the final word on who can reach `public.*`; step 18 is Module 30, which is purely additive and carries its own revoke, so it is safe on either side of step 17 but must come after step 14.
+### 19 files. Steps 1–11 create; steps 12–13 alter what step 11 created; step 14 is independent of Module 23 and only needs steps 1, 8 and 9; step 15 runs last among the schema files and touches steps 4, 5, 6, 7, 10 and 13; step 16 is security hardening that depends only on step 1 and that nothing else depends on; step 17 is the RLS lockdown, which depends on nothing and touches no object — run it after every schema file so it is the final word on who can reach `public.*`; step 18 is Module 30, which is purely additive and carries its own revoke, so it is safe on either side of step 17 but must come after step 14; step 19 is Module 36, one additive table that depends only on step 1 and likewise carries its own revoke.
 
 1. backend/src/modules/auth/auth.sql
    Creates: public.users, audit_logs, handle_updated_at()
@@ -286,6 +286,136 @@
     Purely additive and safe to re-run: every object is `create ... if not
     exists` or `create or replace`, every policy is dropped before it is
     created, and the only existing object touched is the notifications CHECK.
+
+19. backend/src/modules/notifications/schema-36-notification-dismissals.sql
+
+    Module 36 — derived expiry and low-stock alerts. One new table,
+    `notification_dismissals (user_id, alert_key, dismissed_at)`. Depends only
+    on step 1 (`public.users`) and, at runtime, on the `expiry_summary` and
+    `medicines_with_stock` shapes step 15 last rebuilt — it reads neither at
+    migration time and alters neither, so it is safe on either side of steps 16
+    and 17 and carries its own `REVOKE ... FROM anon, authenticated`.
+
+    **Notably it does NOT touch `notifications_type_check`.** Expiry and
+    low-stock alerts are computed per request and never inserted, and both
+    types they use (`NEAR_EXPIRY`, `LOW_STOCK`) have been in that constraint
+    since step 8 — so this migration adds nothing to the CHECK that has already
+    been rewritten wholesale four times.
+
+    Two things worth knowing before changing it:
+
+    · **This table is the one place a DELETE policy is correct.** Everywhere
+      else in this schema a row records something that happened and is never
+      hard-deleted. A dismissal records nothing that happened — it is a live
+      suppression flag, and one whose alert has stopped being true is not
+      history worth keeping, it is an alert that has been wrongly silenced.
+      Expiry is monotone so an expiry dismissal never needs revoking, but low
+      stock is not: without deletion a medicine dismissed once could be
+      restocked, fall low again under an identical key, and never speak again.
+      The service deletes stale dismissals on every read for exactly that
+      reason.
+
+    · **The API survives this file not being applied.** `config/capabilities.js`
+      probes once per process for the table; where it is absent the derived
+      alerts are simply not offered and the bell behaves as it did before
+      Module 36, stored events and all. That is deliberate — querying a table
+      PostgREST does not know fails the WHOLE request, which would take
+      `/notifications` down and break the bell for the attendance and
+      requisition events that do work. **The probe caches, so restart the API
+      after applying this file.**
+
+    After applying and restarting, expect a one-time backlog: with no
+    dismissals recorded, every batch inside the 90-day window alerts at once.
+    Have the owner click "Mark all as read" once to set the baseline. From then
+    on only a batch that CROSSES a threshold speaks again.
+
+    Purely additive and safe to re-run: `create table if not exists`, and every
+    policy is dropped before it is created.
+
+20. backend/src/modules/supplier-invoices/schema-37-invoice-tax-detail.sql
+
+    Module 23 (cont.) — invoice tax detail, document header and party
+    snapshots. Depends only on steps 11–13 (the two supplier-invoice tables)
+    and, at migration time, on `handle_updated_at()` from step 1 and
+    `next_purchase_number()` from step 6, both of which exist long before it.
+    It touches nothing any later migration created, so it is safe as the new
+    last step and would also be safe immediately after step 13.
+
+    Adds 30 columns to `supplier_invoices`, 13 to `supplier_invoice_items`, and
+    one new table, `supplier_invoice_tax_summary (invoice_id, tax_rate, …)` —
+    the vendor's own HSN/tax block, **one row per rate**, because an invoice
+    routinely carries 5%, 12% and 18% together and modelling that as columns
+    would fix the rate list in DDL.
+
+    Four things worth knowing before changing it:
+
+    · **`invoice_type` and `payment_type` are separate axes, deliberately.**
+      "CREDIT" in a payment-terms column means the pharmacy has not paid yet;
+      it does not mean the document is a credit note. Collapsing the two would
+      make every unpaid delivery look like a return — a stock movement in the
+      opposite direction. `invoice_type` is the only new NOT NULL column, and
+      its DEFAULT `'TAX_INVOICE'` is exactly what every pre-migration row
+      already was, which is the whole of the backfill.
+
+    · **`round_off` and `adjustment_amount` carry no `>= 0` CHECK.** MEDICO
+      M002948's round-off is −0.21 (taxable 10327.05 + GST 1263.16 = 11590.21
+      against a printed payable of 11590.00), and rounding down is the commoner
+      direction. A non-negative constraint would make the ordinary case
+      unstorable. Every other money column keeps the `>= 0` discipline.
+
+    · **The view is DROP + CREATE, not `create or replace`.** `si.*` expands at
+      creation time, so §37.1's thirty new columns land where `supplier_name`,
+      `uploaded_by_name` and `approved_by_name` currently sit. CREATE OR REPLACE
+      may only append view columns, never rename one, so it fails with 42P16
+      and takes the migration down with it. Same trap schema-24 §24.5
+      documents, one migration later.
+
+    · **`commit_supplier_invoice()` is replaced again, and this file is now its
+      whole current definition.** The ONLY behavioural change from schema-25 is
+      one guard: a document whose `invoice_type` is not `'TAX_INVOICE'` is
+      refused. `v_units = qty_billed + qty_free` and the `unit_cost`/`mrp`
+      passthrough are byte-identical — no costing behaviour changes. A credit
+      note moves stock OUT, which is what `supplier_returns` and
+      `send_supplier_return_atomic` already own; teaching a receipts function to
+      decrement stock would give two functions authority over the same ledger
+      sign.
+
+    **The API survives this file not being applied.** `config/capabilities.js`
+    probes once per process for `supplier_invoices.invoice_type`; where it is
+    absent the new fields are stripped from every write and Module 23 behaves
+    exactly as it did before — documents are still read, reviewed and imported,
+    only the tax detail is not retained. That is load-bearing rather than
+    defensive dressing: `ingestInvoice` writes the whole header in ONE insert,
+    and sending a column PostgREST does not know rejects the entire statement
+    with PGRST204 — so without the probe an unmigrated database would fail every
+    upload, after paying for the storage write and the Gemini call. **The probe
+    caches, so restart the API after applying this file.**
+
+    Purely additive and safe to re-run: 49 `add column if not exists`, one
+    `create table if not exists`, every index `if not exists`, and every policy
+    dropped before it is created.
+
+## Files added after step 20
+
+These exist and must be run; the numbering above predates them.
+
+- **backend/src/db/schema-31-live-drift.sql** — run immediately after step 18
+  (schema-30), before schema-32. It commits back objects that existed only on the
+  live project: `purchases.invoice_no`, the 4-argument `receive_purchase_atomic`,
+  `purchases_with_totals` carrying `invoice_no` (and `supplier_balances`, rebuilt
+  on top of it), and RLS on `chronic_conditions`. Without it, schema-34 aborts
+  with 42883.
+- **backend/src/db/schema-32 … schema-35** — run in numeric order after schema-31.
+- **backend/src/db/schema-38-delete-bills.sql** — run last. Owner bill deletion:
+  `bills_in_ist_range()`, `preview_bill_deletion()`, `delete_bill_atomic()`,
+  `delete_bills_in_range_atomic()` and the ungranted `delete_bills_core()`.
+  Depends on schema-06-10, 11-14, 21 and 27 and on `audit_logs`; changes no table
+  or view. Deleting a bill removes the bill, its lines, rejected returns and
+  adherence acknowledgments, writes an audit row with a snapshot of each bill in
+  the same transaction, and **never touches either stock ledger**, so stock is not
+  returned. Bills with a pending or approved return are refused. It replaces an
+  unapplied draft, `schema-38-delete-bills-range.sql`, and drops that draft's
+  functions if they exist. Safe to re-run.
 
 ## Module 23 also needs, outside SQL:
 - `GEMINI_API_KEY` in backend/.env (see backend/.env.example). Without it the

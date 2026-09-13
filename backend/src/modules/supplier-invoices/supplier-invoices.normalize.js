@@ -528,12 +528,32 @@ function normalizeGstin(value) {
   return s ? s.toUpperCase().replace(/\s/g, '') : null;
 }
 
-/** Phone numbers keep their printed punctuation (+, -, spaces) but drop
- *  anything that is not plausibly part of a number — letters, labels. */
+/**
+ * Phone numbers keep their printed punctuation — "+", "-", "(", ")", and the
+ * "," or "/" a letterhead uses to run a second number on from the first.
+ *
+ * THE SEPARATOR IS LOAD-BEARING, NOT DECORATION. "08373-266025,261596" is an
+ * STD code and TWO local numbers. The old character class omitted "," and "/",
+ * so it welded them into "08373-266025261596" — a single 17-digit number that
+ * is not any number at all, and which reads plausibly enough to survive review
+ * and be dialled by nobody. Silently changing a transcribed value into a
+ * different transcribed value is precisely what this module exists not to do;
+ * an unreadable field is allowed to reach a human, but not to be rewritten on
+ * the way there.
+ *
+ * The set is kept in step with isContactPhone() in utils/phone.js on purpose:
+ * this value is posted verbatim into POST /suppliers by the review screen's
+ * "Add and link", so a character stripped here that the supplier validator
+ * would have accepted is data destroyed for no reason.
+ *
+ * Letters still go, because that is how a label ("Ph:", "Mob") or a whole
+ * caption gets swept in. Whitespace is re-collapsed AFTER the strip: removing
+ * a character from between two spaces leaves a double.
+ */
 function normalizePhone(value) {
   const s = normalizeText(value, 30);
   if (!s) return null;
-  const cleaned = s.replace(/[^0-9+\-\s()]/g, '').trim();
+  const cleaned = s.replace(/[^0-9+\-\s(),./]/g, '').replace(/\s+/g, ' ').trim();
   return cleaned === '' ? null : cleaned;
 }
 
@@ -876,6 +896,7 @@ module.exports = {
   normalizeBatchNo,
   normalizeText,
   normalizeGstin,
+  normalizePhone,
   resolveDiscountPct,
   descriptionForMatching,
   parsePack,

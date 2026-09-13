@@ -14,6 +14,10 @@ import ErrorState from '../ui/ErrorState';
      does not jump (§3.1);
    · the dialog cannot be dismissed mid-submit, so a half-finished write can't
      be orphaned by an Escape keypress.
+
+   `destructive` follows ConfirmDialog: a form whose submit destroys something
+   (deleting a bill needs a reason, so it cannot be a plain confirm) gets the
+   destructive button, never the primary one.
    ═══════════════════════════════════════════════════════════════════════════ */
 
 export default function FormDialog({
@@ -26,6 +30,7 @@ export default function FormDialog({
   cancelLabel = 'Cancel',
   onSubmit,
   submitBlockedReason = null,
+  destructive = false,
   children,
 }) {
   const [apiError, setApiError] = useState(null);
@@ -72,7 +77,7 @@ export default function FormDialog({
             </DialogClose>
             <Button
               type="submit"
-              variant="primary"
+              variant={destructive ? 'destructive' : 'primary'}
               loading={saving}
               blockedReason={submitBlockedReason}
             >

@@ -926,18 +926,18 @@
                 {
                   "key": "stock",
                   "value": "",
-                  "description": "low | out | ok",
+                  "description": "low | out",
                   "disabled": true
                 },
                 {
                   "key": "search",
                   "value": "",
-                  "description": "free text",
+                  "description": "free text; matches name, generic name, manufacturer",
                   "disabled": true
                 }
               ]
             },
-            "description": "Stock quantities come from the `medicines_with_stock` view â€” summed live from the ledger, never a stored column."
+            "description": "Stock quantities come from the `medicines_with_stock` view — summed live from the ledger, never a stored column. Returns `{ medicines, pagination, stats }`.\n\n`stats` (`total`, `low`, `out`, `active`) are catalogue-wide counts computed in the database, scoped to `search`, `categoryId` and `includeInactive` but not to `stock` or the current page. The summary cards used to be counted from the loaded rows — one page of up to 15 — under labels that said \"In Catalogue\".\n\n`stock=low` means low **and in stock**: `is_low_stock` is `total_stock < threshold`, which is also true at zero."
           }
         },
         {
@@ -1141,12 +1141,24 @@
                 {
                   "key": "search",
                   "value": "",
-                  "description": "free text",
+                  "description": "free text; matches name, generic name, manufacturer",
+                  "disabled": true
+                },
+                {
+                  "key": "categoryId",
+                  "value": "",
+                  "description": "UUID; optional filter",
+                  "disabled": true
+                },
+                {
+                  "key": "stock",
+                  "value": "",
+                  "description": "low | out | near_expiry",
                   "disabled": true
                 }
               ]
             },
-            "description": "Per-medicine stock position across all batches, with live totals summed from the ledger."
+            "description": "Per-medicine stock position across all batches, with live totals summed from the ledger. Paginated: returns `{ inventory, pagination, stats }`.\n\n`stats` (`total`, `out`, `low`, `near`) are catalogue-wide counts computed in the database, scoped to `search` and `categoryId` but deliberately **not** to `stock` — the UI renders them as chips that SET the `stock` filter, so a count narrowed by it would change the moment it was used. Any individual count is `null` if its query failed, which renders as an absent chip rather than a false zero.\n\nNote `stock=low` means low **and in stock**: `is_low_stock` is `total_stock < threshold`, which is also true at zero, so out-of-stock rows are excluded here and counted under `out`."
           }
         },
         {
@@ -1395,12 +1407,32 @@
       "description": "Supplier master with live outstanding balances.",
       "item": [
         {
+          "name": "Supplier options (dropdown)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/suppliers/options",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "suppliers",
+                "options"
+              ]
+            },
+            "description": "Active suppliers as `{ id, name }`, name-ordered, bounded at 500. Both roles — every screen that uses it (Add Batch, purchase orders, supplier returns, invoice review) is reachable by staff.\n\nExists because five components fetched the whole `/suppliers` list — every column, plus a full `supplier_balances` aggregation — to render `{id, name}` options, and not one of them reads phone, GST number or credit terms.\n\nActive only: you cannot raise an order against a deactivated distributor, which is what every one of these dropdowns is for.\n\n**Registered before `/:id`.** The other way round, the literal path binds to the id param, fails `isUUID` and answers 422 about a malformed identifier — a routing bug wearing a validation bug's clothes. `tests/pagination-routes.test.js` guards it."
+          }
+        },
+        {
           "name": "List suppliers",
           "request": {
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{base_url}}/api/v1/suppliers?includeInactive=false",
+              "raw": "{{base_url}}/api/v1/suppliers?page=1&limit=30&includeInactive=false",
               "host": [
                 "{{base_url}}"
               ],
@@ -1411,13 +1443,27 @@
               ],
               "query": [
                 {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "30"
+                },
+                {
+                  "key": "search",
+                  "value": "",
+                  "description": "free text; matches name, contact person, GST number",
+                  "disabled": true
+                },
+                {
                   "key": "includeInactive",
                   "value": "false",
                   "description": "owner only"
                 }
               ]
             },
-            "description": "Outstanding balances are merged in from the `supplier_balances` view â€” computed live, never stored."
+            "description": "Paginated: `{ suppliers, pagination }`. Outstanding balances are merged in from the `supplier_balances` view — computed live, never stored — and are now fetched only for the ids ON THIS PAGE. That view aggregates every purchase line in the database, so pulling all of it to annotate thirty rows was the whole cost of this endpoint.\n\n`search` matches name, contact person and GST number. It is new: the UI has always sent one and this endpoint silently ignored it, so the search box did nothing.\n\nFor a dropdown, use `GET /suppliers/options` instead — it returns id and name only, which is all any supplier `<select>` in the app reads."
           }
         },
         {
@@ -1461,7 +1507,7 @@
                 "suppliers"
               ]
             },
-            "description": "`credit_terms_days` drives the payment-due calculation on purchase orders.\n\n_Requires the **owner** role (403 `FORBIDDEN` for staff)._",
+            "description": "`credit_terms_days` drives the payment-due calculation on purchase orders.\n\n`phone` is genuinely optional (send `null`, `\"\"` or omit it) and is **not** restricted to mobiles — a supplier number is a letterhead detail, so STD landlines (`0836-2661234`), the two numbers distributors print on one line, and `+ - ( ) /` punctuation are all accepted. This is what Module 23's \"Add and link\" posts straight from an extracted invoice. Customer and staff phones keep the stricter mobile rule — those are identities.\n\n_Requires the **owner** role (403 `FORBIDDEN` for staff)._",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"name\": \"MedPlus Distributors\",\n  \"phone\": \"9876543210\",\n  \"email\": \"orders@medplus.example\",\n  \"gst_no\": \"29ABCDE1234F1Z5\",\n  \"credit_terms_days\": 30,\n  \"address\": \"14 Industrial Estate, Bengaluru\",\n  \"contact_person\": \"R. Kumar\"\n}",
@@ -1850,7 +1896,7 @@
                 "{{purchase_item_id}}"
               ]
             },
-            "description": "The only DELETE verb in the API, and it only removes an unsent draft line â€” no business record is ever hard-deleted. **Not yet wired into the frontend.**\n\n_Requires the **owner** role (403 `FORBIDDEN` for staff)._"
+            "description": "The only DELETE verb in the API, and it only removes an unsent draft line â€” the only other permanent removal in the API is the owner deleting a bill (`POST /billing/:id/delete`). **Not yet wired into the frontend.**\n\n_Requires the **owner** role (403 `FORBIDDEN` for staff)._"
           }
         }
       ]
@@ -1887,6 +1933,70 @@
               ]
             },
             "description": "Aggregate revenue for a date range. Computed live â€” no totals are stored.\n\n_Requires the **owner** role (403 `FORBIDDEN` for staff)._"
+          }
+        },
+        {
+          "name": "Preview deleting bills by date",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/billing/delete-preview?dateFrom=2026-09-01&dateTo=2026-09-13",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "billing",
+                "delete-preview"
+              ],
+              "query": [
+                {
+                  "key": "dateFrom",
+                  "value": "2026-09-01"
+                },
+                {
+                  "key": "dateTo",
+                  "value": "2026-09-13"
+                }
+              ]
+            },
+            "description": "Read-only. What `POST /billing/delete-range` would remove for these India-time days: bill and line counts, the total, how many sealed packs and loose units stay deducted from stock, and `blocked`, which lists every bill with a pending or approved customer return (any one of them stops the delete).\n\nSend `bill_count` and `total_amount` back as `expected_count` and `expected_total` when deleting.\n\n_Requires the **owner** role (403 `FORBIDDEN` for staff)._"
+          }
+        },
+        {
+          "name": "Delete bills by date",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/billing/delete-range",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "billing",
+                "delete-range"
+              ]
+            },
+            "description": "**Permanent.** Deletes every bill rung up on these India-time days, with their lines, rejected returns and adherence acknowledgments, in one transaction (`delete_bills_in_range_atomic`, schema-38). **Stock is not returned:** neither ledger is touched. Every sales figure is a live view, so totals, reports and customer history follow immediately.\n\nRefused with `409 BILL_HAS_RETURNS` (with `details.blocked`) if any bill has a pending or approved return, `409 RANGE_CHANGED` if the range no longer matches the preview's `expected_count` / `expected_total`, `404 NO_BILLS_IN_RANGE`, and `422 RANGE_TOO_LARGE` above 1000 bills. The audit log keeps the reason and a snapshot of every deleted bill.\n\n_Requires the **owner** role (403 `FORBIDDEN` for staff)._",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"dateFrom\": \"2026-09-01\",\n  \"dateTo\": \"2026-09-13\",\n  \"reason\": \"Test bills from the setup week\",\n  \"expected_count\": 12,\n  \"expected_total\": 4520.5\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
           }
         },
         {
@@ -1983,7 +2093,7 @@
                 "billing"
               ]
             },
-            "description": "The core transaction. Server-side, in order:\n\n1. **Chronic adherence check.** If the customer has overdue refills, responds `409 ADHERENCE_ACK_REQUIRED` with the warnings. This *never* blocks the sale â€” resend the same body with those warnings echoed in `acknowledged_warnings` and it proceeds.\n2. **Duplicate lines merged.** Two lines for the same medicine are summed before allocation, so a cart cannot oversell one batch.\n3. **FEFO allocation.** Nearest-expiry batch first, spilling into the next as needed. Staff never pick a batch.\n4. **`create_bill_atomic()`** â€” one transaction that locks the batches, writes the bill, its items and the negative ledger entries.\n\nPrices are snapshotted per batch at sale time. **Bills are immutable** â€” there is no PATCH or DELETE; corrections go through Customer Returns.\n\n**Two denominations per line (Module 27).** `qty` counts whole sealed packs â€” strips, bottles, tubes â€” and is the denomination `inventory_ledger` and `medicines.unit` have always used. `loose_qty` counts single units out of an opened pack and is optional; omitting it is exactly the request this endpoint took before, and behaves identically.\n\nA line needs a quantity in at least one of the two, and `qty` may be `0` when `loose_qty` is not. Loose units are only accepted for a medicine whose pack contents are **countable** â€” `pack_content_unit` of TABLET, CAPSULE or PIECE. A 100ML bottle or a 30GM tube answers `422 LOOSE_SALE_UNSUPPORTED`, because one millilitre is not a thing anyone dispenses.\n\nLoose allocation is FEFO too, and spends already-open packs before breaking a new one: for each batch in expiry order it takes what is loose, then opens `ceil(remaining / contents)` packs â€” the minimum, never one per unit. Opening posts `-1 strip_opened` to `inventory_ledger` and `+contents strip_opened` to `loose_unit_ledger`, so the two ledgers reconcile and nothing changes denomination silently. Insufficient loose stock answers `409 INSUFFICIENT_LOOSE_STOCK`.\n\nâš ï¸ Requires migrations `schema-22-atomic-workflows.sql` and, for `loose_qty`, `schema-27-loose-units.sql`.",
+            "description": "The core transaction. Server-side, in order:\n\n1. **Chronic adherence check.** If the customer has overdue refills, responds `409 ADHERENCE_ACK_REQUIRED` with the warnings. This *never* blocks the sale â€” resend the same body with those warnings echoed in `acknowledged_warnings` and it proceeds.\n2. **Duplicate lines merged.** Two lines for the same medicine are summed before allocation, so a cart cannot oversell one batch.\n3. **FEFO allocation.** Nearest-expiry batch first, spilling into the next as needed. Staff never pick a batch.\n4. **`create_bill_atomic()`** â€” one transaction that locks the batches, writes the bill, its items and the negative ledger entries.\n\nPrices are snapshotted per batch at sale time. **Bills cannot be edited** â€” there is no PATCH, and corrections go through Customer Returns. The one exception is the owner deleting bills outright (`POST /api/v1/billing/:id/delete`, or by date range), which never returns stock.\n\n**Two denominations per line (Module 27).** `qty` counts whole sealed packs â€” strips, bottles, tubes â€” and is the denomination `inventory_ledger` and `medicines.unit` have always used. `loose_qty` counts single units out of an opened pack and is optional; omitting it is exactly the request this endpoint took before, and behaves identically.\n\nA line needs a quantity in at least one of the two, and `qty` may be `0` when `loose_qty` is not. Loose units are only accepted for a medicine whose pack contents are **countable** â€” `pack_content_unit` of TABLET, CAPSULE or PIECE. A 100ML bottle or a 30GM tube answers `422 LOOSE_SALE_UNSUPPORTED`, because one millilitre is not a thing anyone dispenses.\n\nLoose allocation is FEFO too, and spends already-open packs before breaking a new one: for each batch in expiry order it takes what is loose, then opens `ceil(remaining / contents)` packs â€” the minimum, never one per unit. Opening posts `-1 strip_opened` to `inventory_ledger` and `+contents strip_opened` to `loose_unit_ledger`, so the two ledgers reconcile and nothing changes denomination silently. Insufficient loose stock answers `409 INSUFFICIENT_LOOSE_STOCK`.\n\nâš ï¸ Requires migrations `schema-22-atomic-workflows.sql` and, for `loose_qty`, `schema-27-loose-units.sql`.",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"customer_phone\": \"9876543210\",\n  \"payment_mode\": \"cash\",\n  \"discount_amount\": 0,\n  \"items\": [\n    {\n      \"medicine_id\": \"{{medicine_id}}\",\n      \"qty\": 2,\n      \"loose_qty\": 3\n    }\n  ],\n  \"acknowledged_warnings\": []\n}",
@@ -2012,6 +2122,62 @@
               }
             }
           ]
+        },
+        {
+          "name": "Preview deleting a bill",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/billing/{{bill_id}}/delete-preview",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "billing",
+                "{{bill_id}}",
+                "delete-preview"
+              ]
+            },
+            "description": "Read-only. The same preview as the date-range one, for a single bill. `404 BILL_NOT_FOUND` if it does not exist.\n\n_Requires the **owner** role (403 `FORBIDDEN` for staff)._"
+          }
+        },
+        {
+          "name": "Delete bill",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/billing/{{bill_id}}/delete",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "billing",
+                "{{bill_id}}",
+                "delete"
+              ]
+            },
+            "description": "**Permanent.** Deletes one bill with its lines, rejected returns and adherence acknowledgments (`delete_bill_atomic`, schema-38). **Stock is not returned.** A reason of 5 to 500 characters is required. `409 BILL_HAS_RETURNS` (with `details.blocked`) if the bill has a pending or approved return. The audit log keeps the reason and a snapshot of the bill.\n\n_Requires the **owner** role (403 `FORBIDDEN` for staff)._",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Duplicate bill rung up by mistake\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
         }
       ]
     },
@@ -2614,7 +2780,7 @@
                 "dashboard"
               ]
             },
-            "description": "Counts and stock value bucketed by urgency.\n\n_Requires the **owner** role (403 `FORBIDDEN` for staff)._"
+            "description": "Counts and stock value bucketed by urgency: `{ totals: { expired, critical, warning, watch, potential_loss } }`.\n\n**Returns no rows.** It used to ship every batch in the pharmacy pre-grouped into four arrays so the client could call `.length` on them; the rows now come from `GET /expiry/batches`, one bucket and one page at a time. `potential_loss` is still summed exactly — PostgREST has no SUM, so this reads two columns rather than thirty.\n\n_Requires the **owner** role (403 `FORBIDDEN` for staff)._"
           }
         },
         {
@@ -2635,6 +2801,41 @@
               ]
             },
             "description": "Every batch with stock, its days-to-expiry and the value at risk. The exportable view behind the dashboard.\n\n_Requires the **owner** role (403 `FORBIDDEN` for staff)._"
+          }
+        },
+        {
+          "name": "Batches in one urgency bucket",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/expiry/batches?urgency=expired&page=1&limit=30",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "expiry",
+                "batches"
+              ],
+              "query": [
+                {
+                  "key": "urgency",
+                  "value": "expired",
+                  "description": "required; expired | critical | warning | watch"
+                },
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "30"
+                }
+              ]
+            },
+            "description": "The paged rows behind each dashboard tile. `urgency` is REQUIRED and must be one of `expired`, `critical`, `warning`, `watch` — `ok` is not a bucket the dashboard offers.\n\nOrdered `exp_date, id`. The explicit order is not cosmetic: `expiry_summary` carries an `ORDER BY` inside its own definition, Postgres does not guarantee that survives an outer LIMIT/OFFSET, and `exp_date` is not unique — an unstable sort under paging repeats rows on one page and drops them from another.\n\nReturns `{ batches, pagination }`. There is no per-page loss total: it would be a figure about the page. The whole-bucket value at risk is on `/expiry/dashboard`.\n\n_Requires the **owner** role (403 `FORBIDDEN` for staff)._"
           }
         },
         {
@@ -2742,6 +2943,27 @@
           }
         },
         {
+          "name": "GET /api/v1/reports/sales/export",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/reports/sales/export",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "reports",
+                "sales",
+                "export"
+              ]
+            },
+            "description": "> **TODO — undocumented.** Add an entry for `GET /api/v1/reports/sales/export` to `backend/tools/postman/routes-meta.js`."
+          }
+        },
+        {
           "name": "Margin report",
           "request": {
             "method": "GET",
@@ -2806,11 +3028,11 @@
                 }
               ]
             },
-            "description": "Spend by supplier over a date range.\n\n_Requires the **owner** role (403 `FORBIDDEN` for staff)._"
+            "description": "Spend by supplier over a date range. Returns `{ summary, flow, purchases, purchases_total, dateFrom, dateTo, generated_at }`.\n\n`summary` covers EVERY order in the window. `flow` is the same set in four columns, for the month-by-month chart — bounding it would silently under-plot a month, which is worse than a wrong number because it looks right. `purchases` is the detail table, capped at the 100 most recent; compare it against `purchases_total` to know whether it was truncated.\n\n_Requires the **owner** role (403 `FORBIDDEN` for staff)._"
           }
         },
         {
-          "name": "Inventory valuation",
+          "name": "Inventory snapshot",
           "request": {
             "method": "GET",
             "header": [],
@@ -2826,7 +3048,7 @@
                 "inventory"
               ]
             },
-            "description": "Stock on hand valued at cost and at selling price, with the spread between them.\n\n_Requires the **owner** role (403 `FORBIDDEN` for staff)._"
+            "description": "Catalogue health plus the reorder list: `{ summary, reorder, reorder_total, generated_at }`.\n\n`summary` (`total_medicines`, `healthy`, `low_stock`, `out_of_stock`, `near_expiry`) is counted in the database. `healthy` is derived by subtraction rather than counted, because `is_low_stock` is NULL where a medicine has no threshold and an equality filter would miss those rows — leaving the stock-health bar not summing to the catalogue.\n\n`reorder` is everything at or below its reorder threshold (which includes out-of-stock, since `is_low_stock` is true at zero), lowest stock first, capped at 100. **The `medicines` key is gone** — this endpoint used to return the entire active catalogue so the client could filter it into this same list.\n\n_Requires the **owner** role (403 `FORBIDDEN` for staff)._"
           }
         },
         {
@@ -2888,11 +3110,11 @@
                 {
                   "key": "unreadOnly",
                   "value": "false",
-                  "description": "true returns unread only"
+                  "description": "true returns unread only (stored events; alerts are never \"read\")"
                 }
               ]
             },
-            "description": "Alerts for the signed-in user, newest first."
+            "description": "Two sources in one list. **Events** are stored rows (staff check-ins, stock-requisition outcomes), newest first. **Alerts** are derived per request from `expiry_summary` and `medicines_with_stock` and are never stored, so a sold or written-off batch drops out on its own; they lead the list and carry `context`, `derived: true` and an `alert:` id. Alerts are OWNER-ONLY and filtered server-side (A9) — a staff payload contains none."
           }
         },
         {
@@ -2912,7 +3134,7 @@
                 "count"
               ]
             },
-            "description": "**Not yet surfaced in the frontend** â€” the header bell has no unread badge wired to this."
+            "description": "Unread stored events plus live derived alerts. Emits `unread_count` (not `count`). The alert total is uncapped even though the list above caps at 50, so the badge stays honest."
           }
         },
         {
@@ -2932,7 +3154,7 @@
                 "read-all"
               ]
             },
-            "description": "Clears the unread state for every notification belonging to the signed-in user."
+            "description": "Clears both halves: marks every stored notification read AND dismisses every live derived alert. One half alone would leave a badge that cannot be cleared."
           }
         },
         {
@@ -2953,7 +3175,7 @@
                 "read"
               ]
             },
-            "description": "Marks a single notification read. Only affects notifications owned by the caller."
+            "description": "Accepts two identifier shapes. A **notification UUID** sets `is_read`. An **alert key** (`alert:TYPE:entity_id:tier`, e.g. `alert:NEAR_EXPIRY:<batch_id>:critical`) writes a row to `notification_dismissals` instead, silencing that alert permanently. The tier is part of the key, so dismissing a batch at 90 days does not silence it at 30 — it re-alerts on escalation. Anything else is 422."
           }
         }
       ]
@@ -3708,10 +3930,10 @@
                 "{{supplier_invoice_id}}"
               ]
             },
-            "description": "Header corrections during review. `status` is deliberately rejected here â€” it moves only through `/approve` and `/reject`, which carry the role guard and the audit entry.\n\nEvery save re-runs the deterministic rules and returns the recomputed `validation_warnings` and `can_import`.",
+            "description": "Header corrections during review. `status` is deliberately rejected here â€” it moves only through `/approve` and `/reject`, which carry the role guard and the audit entry.\n\nEvery save re-runs the deterministic rules and returns the recomputed `validation_warnings` and `can_import`.\n\n**`invoice_type` and `payment_type` are separate axes.** `invoice_type` is what the DOCUMENT is (`TAX_INVOICE` / `CREDIT_NOTE` / `DEBIT_NOTE`); `payment_type` is the terms (`CASH` / `CREDIT`). A tax invoice marked \"Credit\" is a `TAX_INVOICE` with `payment_type: CREDIT` — it is not a credit note, and treating it as one would reverse the direction of the stock it delivers. Only a `TAX_INVOICE` can be approved into stock; the others are recorded and refused with `INVOICE_TYPE_NOT_IMPORTABLE`.\n\n**`round_off` and `adjustment_amount` are signed.** A round-off is negative more often than positive: taxable 10327.05 + GST 1263.16 = 11590.21 against a printed payable of 11590.00 is `round_off: -0.21`. Every other money field is non-negative.\n\n**`tax_summary` is grouped by rate and REPLACES the stored block wholesale.** One entry per distinct GST rate — an invoice carrying 5%, 12% and 18% sends three. Rates must be unique within the array. Sending it replaces rather than merges, because correcting a misread rate has to remove the old band as well as add the new one.\n\nPrinted totals are stored as printed and never overwritten by calculation. The response carries `derived_totals` — the API's own rollup of the lines — as a separate key so the two can be compared; disagreements surface as `TAX_SUMMARY_MISMATCH`, `NET_PAYABLE_MISMATCH` and `GST_TOTAL_UNREAD` warnings, none of which block import.\n\n⚠️ The tax, party and document fields need migration `schema-37-invoice-tax-detail.sql`. Without it they are silently dropped from the write and the endpoint behaves exactly as it did before.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"supplier_id\": \"{{supplier_id}}\",\n  \"invoice_no\": \"INV/2026/8841\",\n  \"invoice_date\": \"2026-08-12\",\n  \"supplier_dl_no\": \"KA-GD/1208-1/28965\",\n  \"taxable_total\": 10000,\n  \"gst_total\": 1200,\n  \"net_total\": 11200\n}",
+              "raw": "{\n  \"supplier_id\": \"{{supplier_id}}\",\n  \"invoice_no\": \"INV/2026/8841\",\n  \"invoice_date\": \"2026-08-12\",\n  \"invoice_time\": \"11:42\",\n  \"invoice_type\": \"TAX_INVOICE\",\n  \"payment_type\": \"CREDIT\",\n  \"due_date\": \"2026-09-11\",\n  \"order_number\": \"PO-771\",\n  \"lr_number\": \"LR-9931\",\n  \"page_number\": 1,\n  \"total_pages\": 2,\n  \"supplier_dl_no\": \"KA-GD/1208-1/28965\",\n  \"supplier_state\": \"Karnataka\",\n  \"supplier_state_code\": \"29\",\n  \"buyer_name\": \"P. Care Pharma\",\n  \"buyer_gstin\": \"29ABCDE1234F1Z5\",\n  \"buyer_state_code\": \"29\",\n  \"subtotal\": 10309.28,\n  \"total_discount\": 309.28,\n  \"taxable_total\": 10000,\n  \"total_cgst\": 600,\n  \"total_sgst\": 600,\n  \"gst_total\": 1200,\n  \"invoice_total\": 11200,\n  \"round_off\": -0.21,\n  \"net_total\": 11199.79,\n  \"tax_summary\": [\n    {\n      \"tax_rate\": 5,\n      \"basic_amount\": 2000,\n      \"taxable_amount\": 2000,\n      \"cgst_amount\": 50,\n      \"sgst_amount\": 50,\n      \"total_tax\": 100\n    },\n    {\n      \"tax_rate\": 12,\n      \"basic_amount\": 5000,\n      \"taxable_amount\": 5000,\n      \"cgst_amount\": 300,\n      \"sgst_amount\": 300,\n      \"total_tax\": 600\n    },\n    {\n      \"tax_rate\": 18,\n      \"basic_amount\": 3000,\n      \"taxable_amount\": 3000,\n      \"cgst_amount\": 270,\n      \"sgst_amount\": 270,\n      \"total_tax\": 540\n    }\n  ]\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -3744,10 +3966,10 @@
                 "{{supplier_invoice_item_id}}"
               ]
             },
-            "description": "Line corrections during review. Setting `medicine_id` marks the match `manual`, which clears `LOW_MATCH_CONFIDENCE` â€” confirmation is tracked here, not trusted from the client.\n\n**Units â€” the rule this module most needs you to get right.** `qty_billed`/`qty_free` count SALEABLE units (strips, bottles, tubes, inhalers) and that IS the stock quantity: **stock taken in = qty_billed + qty_free**. The Pack column describes what is *inside* one of those units and never multiplies anything.\n\n`\"100'S\"` qty 5 is **5 strips at the printed rate each**, not 500 tablets. Verified on all 18 legible lines of two real MEDICO invoices: `qty_billed Ã— printed_rate = line_total`, every time.\n\n**Printed vs derived.** `printed_rate`/`printed_mrp` are the figures exactly as printed, per saleable unit. `unit_cost` is `printed_rate` net of `discount_pct`; `mrp` is `printed_mrp` unchanged. `pack_raw` is parsed into the read-only `sale_unit`, `content_quantity`, `content_unit` and `sub_pack_*` fields â€” informational, shown to the reviewer, never multiplied into stock or money.\n\nPatching `printed_rate`, `printed_mrp`, `discount_pct` or `pack_raw` recomputes the derived fields. Sending `unit_cost`, `mrp` or `selling_price` explicitly in the same request suppresses that â€” a typed value always wins.\n\n`is_excluded: true` drops a line from the import (freight, samples) along with its warnings.",
+            "description": "Line corrections during review. Setting `medicine_id` marks the match `manual`, which clears `LOW_MATCH_CONFIDENCE` â€” confirmation is tracked here, not trusted from the client.\n\n**Units â€” the rule this module most needs you to get right.** `qty_billed`/`qty_free` count SALEABLE units (strips, bottles, tubes, inhalers) and that IS the stock quantity: **stock taken in = qty_billed + qty_free**. The Pack column describes what is *inside* one of those units and never multiplies anything.\n\n`\"100'S\"` qty 5 is **5 strips at the printed rate each**, not 500 tablets. Verified on all 18 legible lines of two real MEDICO invoices: `qty_billed Ã— printed_rate = line_total`, every time.\n\n**Printed vs derived.** `printed_rate`/`printed_mrp` are the figures exactly as printed, per saleable unit. `unit_cost` is `printed_rate` net of `discount_pct`; `mrp` is `printed_mrp` unchanged. `pack_raw` is parsed into the read-only `sale_unit`, `content_quantity`, `content_unit` and `sub_pack_*` fields â€” informational, shown to the reviewer, never multiplied into stock or money.\n\nPatching `printed_rate`, `printed_mrp`, `discount_pct`, `discount_amount`, `line_total` or `pack_raw` recomputes the derived fields. Sending `unit_cost`, `mrp` or `selling_price` explicitly in the same request suppresses that — a typed value always wins.\n\n**Three prices, never two.** `printed_mrp` is what the patient pays, `printed_rate` is what this pharmacy was charged, and `trade_price` is the vendor's list price for the trade. MRP 28.31 against a rate of 20.22 is normal, not a conflict to reconcile — none of the three is ever copied into another.\n\n**Discount as an amount is now honoured.** Where a vendor prints `discount_amount` and no `discount_pct`, an effective percentage is derived from the gross and fed to the same costing formula. Before this the line silently costed at the FULL printed rate, with no warning, because the reconciliation compared gross against gross. A printed `discount_pct` always wins when both are present, so nothing changes for an invoice that carries one.\n\n**Tax is captured but is never a cost.** `cgst_*`/`sgst_*`/`igst_*`/`cess_*` and `hsn_code` are stored for the tax summary and GSTR-2 reconciliation. `unit_cost` stays GST-exclusive — a registered pharmacy reclaims input tax, so it is not part of what the stock cost. A line carries CGST+SGST **or** IGST, never both; sending both raises `GST_SPLIT_INCONSISTENT` (advisory).\n\n`is_excluded: true` drops a line from the import (freight, samples) along with its warnings.\n\n⚠️ The tax and HSN fields need migration `schema-37-invoice-tax-detail.sql`. Without it they are silently dropped from the write and the endpoint behaves exactly as it did before.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"batch_no\": \"PC-9912\",\n  \"exp_date\": \"2028-04-30\",\n  \"qty_billed\": 5,\n  \"qty_free\": 0,\n  \"pack_raw\": \"100'S\",\n  \"printed_rate\": 103.12,\n  \"printed_mrp\": 150,\n  \"discount_pct\": 3,\n  \"gst_pct\": 12\n}",
+              "raw": "{\n  \"batch_no\": \"PC-9912\",\n  \"exp_date\": \"2028-04-30\",\n  \"qty_billed\": 5,\n  \"qty_free\": 1,\n  \"pack_raw\": \"100'S\",\n  \"hsn_code\": \"30049099\",\n  \"printed_rate\": 103.12,\n  \"trade_price\": 110,\n  \"printed_mrp\": 150,\n  \"discount_pct\": 3,\n  \"discount_amount\": 15.47,\n  \"gst_pct\": 12,\n  \"cgst_pct\": 6,\n  \"cgst_amount\": 30.01,\n  \"sgst_pct\": 6,\n  \"sgst_amount\": 30.01,\n  \"taxable_amount\": 500.13,\n  \"line_total\": 515.6,\n  \"net_amount\": 560.15\n}",
               "options": {
                 "raw": {
                   "language": "json"

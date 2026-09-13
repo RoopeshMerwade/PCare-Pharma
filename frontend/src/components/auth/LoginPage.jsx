@@ -8,6 +8,7 @@ import Link from '../../ui/Link';
 import ErrorState from '../../ui/ErrorState';
 import ThemeToggle from '../common/ThemeToggle';
 import pharmacyIllustration from '../../assets/illustrations/pharmacy-counter.png';
+import mobilePharmacyIllustration from '../../assets/a292240e-9c28-4bec-8328-8f5cd1a10585.png';
 
 /* ═══════════════════════════════════════════════════════════════════════════
    LoginPage — Shadcn login-02 split-screen authentication page.
@@ -45,7 +46,7 @@ export default function LoginPage() {
   return (
     <div className="grid min-h-screen bg-background lg:grid-cols-2">
       {/* ── Left column: Login form & actions ─────────────────────────── */}
-      <div className="flex flex-col justify-between p-s4 sm:p-s6 lg:p-s8">
+      <div className="flex flex-col justify-between p-s4 pb-0 sm:p-s6 sm:pb-0 lg:p-s8 lg:pb-s8">
         {/* Header brand & Theme Toggle */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-s2">
@@ -134,6 +135,12 @@ export default function LoginPage() {
         <div className="text-center text-base text-muted-foreground">
           P.Care Pharmacy Management &middot; Dispensary &amp; Inventory System
         </div>
+
+        <img
+          src={mobilePharmacyIllustration}
+          alt="Pharmacy counter with medicines and customers"
+          className="mobile-edge-image mt-s4 block object-contain lg:hidden"
+        />
       </div>
 
       {/* ── Right column: Hero illustration (lg+) ───────────────────────── */}

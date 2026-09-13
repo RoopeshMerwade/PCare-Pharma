@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../lib/api';
 import { cn } from '../../lib/cn';
 import { count, date, plural } from '../../lib/format';
@@ -8,9 +8,12 @@ import Button from '../../ui/Button';
 import Card, { CardBody } from '../../ui/Card';
 import EmptyState from '../../ui/EmptyState';
 import ErrorState from '../../ui/ErrorState';
+import Pagination from '../../ui/Pagination';
 import Skeleton, { SkeletonRegion, SkeletonRows, SkeletonTile } from '../../ui/Skeleton';
 import { useToast } from '../../ui/Toast';
 import { Money, Qty } from '../../domain/Money';
+
+const PAGE_SIZE = 20;
 
 /* The four buckets the backend groups batches into. Tone is carried by the
    badge and by the word in the label — the tab itself is never distinguished
@@ -32,6 +35,20 @@ export default function ExpiryDashboardPage() {
   const [error, setError] = useState(null);
   const [bucket, setBucket] = useState('expired');
 
+  /* The rows are a SECOND fetch now. /expiry/dashboard used to ship every
+     batch in the pharmacy pre-grouped into four arrays so the tiles could call
+     .length on them; it returns counts only, and each bucket is paged.
+
+     Deliberately not useResource: its 350ms filter debounce would apply to a
+     bucket-tile click, and the hook's own comment gives the reason — "a 350ms
+     delay after clicking Next reads as a broken button". A tile in a tab strip
+     is a click, not a keystroke. */
+  const [batches, setBatches] = useState([]);
+  const [rowsPagination, setRowsPagination] = useState({ page: 1, pages: 0, total: 0, limit: PAGE_SIZE });
+  const [page, setPage] = useState(1);
+  const [rowsLoading, setRowsLoading] = useState(true);
+  const rowsRequestId = useRef(0);
+
   const fetchDashboard = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -45,25 +62,59 @@ export default function ExpiryDashboardPage() {
     }
   }, []);
 
-  useEffect(() => { fetchDashboard(); }, [fetchDashboard]);
+  const fetchBatches = useCallback(async (currentBucket, currentPage) => {
+    const id = ++rowsRequestId.current;
+    setRowsLoading(true);
+    try {
+      const params = new URLSearchParams({
+        urgency: currentBucket, page: String(currentPage), limit: String(PAGE_SIZE),
+      });
+      const res = await api.get(`/expiry/batches?${params}`);
+      if (id !== rowsRequestId.current) return; // superseded by a newer bucket/page
+      setBatches(res.data.batches || []);
+      setRowsPagination(res.data.pagination || { page: currentPage, pages: 0, total: 0, limit: PAGE_SIZE });
+    } catch (err) {
+      if (id !== rowsRequestId.current) return;
+      setError(err);
+      setBatches([]);
+    } finally {
+      if (id === rowsRequestId.current) setRowsLoading(false);
+    }
+  }, []);
 
-  const summary = dashboard?.summary || {};
+  useEffect(() => { fetchDashboard(); }, [fetchDashboard]);
+  useEffect(() => { fetchBatches(bucket, page); }, [fetchBatches, bucket, page]);
+
   const totals = dashboard?.totals || {};
-  const batches = summary[bucket] || [];
-  const expiredCount = summary.expired?.length || 0;
+  const expiredCount = totals.expired || 0;
   const activeBucket = BUCKETS.find((b) => b.key === bucket);
+
+  // Switching bucket must reset the page, or moving from page 4 of Expired to
+  // a Critical bucket with two pages lands on an empty list.
+  const selectBucket = (key) => {
+    if (key === bucket) return;
+    setBucket(key);
+    setPage(1);
+  };
+
+  const refreshAll = () => {
+    fetchDashboard();
+    fetchBatches(bucket, page);
+  };
 
   const handleWriteOff = async () => {
     const batch = writeOff.target;
     await api.patch(`/expiry/batch/${batch.id}/writeoff`);
     toast.success(`Batch ${batch.batch_no} written off.`);
-    fetchDashboard();
+    refreshAll();
   };
 
   const handleBulkWriteOff = async () => {
     const res = await api.post('/expiry/bulk-writeoff');
     toast.success(res.data?.message || `${plural(expiredCount, 'batch', 'batches')} written off.`);
+    setPage(1);
     fetchDashboard();
+    fetchBatches(bucket, 1);
   };
 
   return (
@@ -104,10 +155,10 @@ export default function ExpiryDashboardPage() {
         <>
           <div className="mb-s4 grid grid-cols-2 gap-s3 lg:grid-cols-4">
             {BUCKETS.map((b) => {
-              const n = (summary[b.key] || []).length;
+              const n = totals[b.key] ?? 0;
               const active = bucket === b.key;
               return (
-                <Card key={b.key} onClick={() => setBucket(b.key)} aria-pressed={active} className={cn(active && 'ring-2 ring-ring')}>
+                <Card key={b.key} onClick={() => selectBucket(b.key)} aria-pressed={active} className={cn(active && 'ring-2 ring-ring')}>
                   <CardBody className="flex flex-col gap-s1">
                     <span className="tabular text-lg font-bold text-foreground">{count(n)}</span>
                     <span className={cn('text-base font-bold', active ? 'text-accent' : 'text-muted-foreground')}>
@@ -131,11 +182,15 @@ export default function ExpiryDashboardPage() {
           )}
 
           <h2 className="mb-s2 text-sm font-bold text-foreground">
-            {activeBucket.label} — {plural(batches.length, 'batch', 'batches')}
+            {activeBucket.label} — {plural(rowsPagination.total ?? batches.length, 'batch', 'batches')}
           </h2>
           <p className="mb-s3 text-base text-muted-foreground">{activeBucket.blurb}</p>
 
-          {batches.length === 0 ? (
+          {rowsLoading ? (
+            <SkeletonRegion label={`Loading ${activeBucket.label.toLowerCase()} batches…`}>
+              <SkeletonRows count={5} />
+            </SkeletonRegion>
+          ) : batches.length === 0 ? (
             <EmptyState
               title={
                 bucket === 'expired'
@@ -180,6 +235,17 @@ export default function ExpiryDashboardPage() {
                 </li>
               ))}
             </ul>
+          )}
+
+          {!rowsLoading && (
+            <Pagination
+              page={rowsPagination.page}
+              pages={rowsPagination.pages}
+              total={rowsPagination.total}
+              limit={rowsPagination.limit}
+              onPageChange={setPage}
+              itemNoun="batches"
+            />
           )}
         </>
       )}

@@ -4,36 +4,78 @@ const { supabase } = require('../../config/supabase');
 const { AppError } = require('../../utils/AppError');
 const { logAudit } = require('../../utils/audit');
 const { appendLedger } = require('../inventory/inventory.service');
+const { paginationMeta } = require('../../utils/postgrest');
 const logger = require('../../utils/logger');
 
-// ── EXPIRY DASHBOARD (all batches with stock, grouped by urgency)
+const URGENCIES = ['expired', 'critical', 'warning', 'watch'];
+
+/**
+ * Counts and the value at risk. Deliberately returns NO rows.
+ *
+ * The four bucket ARRAYS are gone — the page now pages each bucket from
+ * getExpiryBatches, and shipping every batch in the pharmacy so the client
+ * could call .length on four arrays was the whole weight of this endpoint.
+ *
+ * Two columns rather than `*` because PostgREST has no SUM and
+ * `potential_loss` must stay exact to the paisa. This is the one whole-table
+ * read that survives the refactor, and it is now ~2 numbers per batch instead
+ * of ~30. The bucket counts then come from that same array for free, rather
+ * than costing four more round trips.
+ *
+ * `urgency` is a real column on the view (a CASE over exp_date), so the
+ * bucketing here is the database's, unchanged — not a second derivation.
+ */
 async function getExpiryDashboard() {
-  const { data, error } = await supabase.from('expiry_summary').select('*').order('exp_date', { ascending: true });
+  const { data, error } = await supabase
+    .from('expiry_summary')
+    .select('urgency, potential_loss_value')
+    .neq('urgency', 'ok');
   if (error) throw new AppError('Failed to fetch expiry data.', 500, 'DB_ERROR');
 
-  const summary = { expired: [], critical: [], warning: [], watch: [], ok: [] };
-  const totals  = { expired: 0, critical: 0, warning: 0, watch: 0, potential_loss: 0 };
+  const totals = { expired: 0, critical: 0, warning: 0, watch: 0, potential_loss: 0 };
+  for (const b of data || []) {
+    if (totals[b.urgency] !== undefined) totals[b.urgency] += 1;
+    totals.potential_loss += parseFloat(b.potential_loss_value || 0);
+  }
 
-  data.forEach(b => {
-    const bucket = b.urgency;
-    if (summary[bucket]) summary[bucket].push(b);
-    if (bucket !== 'ok') {
-      totals[bucket] = (totals[bucket] || 0) + 1;
-      totals.potential_loss += parseFloat(b.potential_loss_value || 0);
-    }
-  });
-
-  return { summary, totals };
+  return { totals };
 }
 
-// ── FILTER BY URGENCY
-async function getBatchesByUrgency(urgency) {
-  const valid = ['expired','critical','warning','watch'];
-  if (!valid.includes(urgency)) throw new AppError(`Urgency must be one of: ${valid.join(', ')}`, 422, 'INVALID_URGENCY');
+/**
+ * One page of one urgency bucket.
+ *
+ * The explicit .order() is required, not cosmetic. expiry_summary carries
+ * `order by exp_date asc` INSIDE its own definition, and Postgres does not
+ * guarantee a view's ORDER BY survives an outer LIMIT/OFFSET — under paging an
+ * unstable sort silently repeats rows on one page and drops them from another.
+ * `.order('id')` then makes it total: exp_date is nowhere near unique.
+ *
+ * `total_loss_value` is gone from this response. It was a sum over every row
+ * of the bucket; as a per-page figure it would be a lie about the page. The
+ * whole-bucket number lives in getExpiryDashboard().totals.potential_loss.
+ */
+async function getExpiryBatches({ urgency, page = 1, limit = 30 } = {}) {
+  if (!URGENCIES.includes(urgency)) {
+    throw new AppError(`Urgency must be one of: ${URGENCIES.join(', ')}`, 422, 'INVALID_URGENCY');
+  }
+  const offset = (page - 1) * limit;
 
-  const { data, error } = await supabase.from('expiry_summary').select('*').eq('urgency', urgency).order('exp_date', { ascending: true });
+  const { data, error, count } = await supabase
+    .from('expiry_summary')
+    .select('*', { count: 'exact' })
+    .eq('urgency', urgency)
+    .order('exp_date', { ascending: true })
+    .order('id', { ascending: true })
+    .range(offset, offset + limit - 1);
+
   if (error) throw new AppError('Failed to fetch batches.', 500, 'DB_ERROR');
-  return { batches: data, count: data.length, total_loss_value: data.reduce((s,b) => s + parseFloat(b.potential_loss_value||0), 0) };
+  return { batches: data || [], pagination: paginationMeta(page, limit, count) };
+}
+
+/** Kept so GET /expiry/urgency/:urgency — a documented route in the generated
+ *  Postman collection — keeps answering. */
+async function getBatchesByUrgency(urgency) {
+  return getExpiryBatches({ urgency });
 }
 
 // ── WRITE OFF EXPIRED BATCH (delegates to inventory module)
@@ -58,7 +100,10 @@ async function writeOffBatch(batchId, userId) {
 
 // ── BULK WRITE-OFF (all expired batches with stock)
 async function bulkWriteOffExpired(userId) {
-  const { data: expired } = await supabase.from('expiry_summary').select('*').eq('urgency', 'expired').gt('stock_qty', 0);
+  // Three columns, not `*` — writeOffBatch re-reads the batch itself, so
+  // everything else on the row was fetched and thrown away.
+  const { data: expired } = await supabase.from('expiry_summary')
+    .select('id, stock_qty, unit_cost').eq('urgency', 'expired').gt('stock_qty', 0);
   if (!expired?.length) return { written_off: 0, total_value: 0 };
 
   let totalValue = 0;
@@ -81,4 +126,4 @@ async function getExpiryReport() {
   return report;
 }
 
-module.exports = { getExpiryDashboard, getBatchesByUrgency, writeOffBatch, bulkWriteOffExpired, getExpiryReport };
+module.exports = { getExpiryDashboard, getExpiryBatches, getBatchesByUrgency, writeOffBatch, bulkWriteOffExpired, getExpiryReport, URGENCIES };

@@ -166,12 +166,18 @@ module.exports = {
   },
   'GET /api/v1/medicines': {
     name: 'List medicines',
-    description: 'Stock quantities come from the `medicines_with_stock` view â€” summed live from the ledger, never a stored column.',
+    description:
+      'Stock quantities come from the `medicines_with_stock` view — summed live from the ledger, never a stored column. ' +
+      'Returns `{ medicines, pagination, stats }`.\n\n' +
+      '`stats` (`total`, `low`, `out`, `active`) are catalogue-wide counts computed in the database, scoped to ' +
+      '`search`, `categoryId` and `includeInactive` but not to `stock` or the current page. The summary cards used to ' +
+      'be counted from the loaded rows — one page of up to 15 — under labels that said "In Catalogue".\n\n' +
+      '`stock=low` means low **and in stock**: `is_low_stock` is `total_stock < threshold`, which is also true at zero.',
     query: {
       page: 1, limit: 30,
       categoryId: ['', 'UUID; optional filter'],
-      stock: ['', 'low | out | ok'],
-      search: ['', 'free text'],
+      stock: ['', 'low | out'],
+      search: ['', 'free text; matches name, generic name, manufacturer'],
     },
   },
   'GET /api/v1/medicines/:id': { name: 'Get medicine', pathVars: { id: 'medicine_id' } },
@@ -208,8 +214,21 @@ module.exports = {
   // â”€â”€ Inventory â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   'GET /api/v1/inventory': {
     name: 'Inventory overview',
-    description: 'Per-medicine stock position across all batches, with live totals summed from the ledger.',
-    query: { page: 1, limit: 30, search: ['', 'free text'] },
+    description:
+      'Per-medicine stock position across all batches, with live totals summed from the ledger. ' +
+      'Paginated: returns `{ inventory, pagination, stats }`.\n\n' +
+      '`stats` (`total`, `out`, `low`, `near`) are catalogue-wide counts computed in the database, ' +
+      'scoped to `search` and `categoryId` but deliberately **not** to `stock` — the UI renders them as ' +
+      'chips that SET the `stock` filter, so a count narrowed by it would change the moment it was used. ' +
+      'Any individual count is `null` if its query failed, which renders as an absent chip rather than a false zero.\n\n' +
+      'Note `stock=low` means low **and in stock**: `is_low_stock` is `total_stock < threshold`, which is also true at zero, ' +
+      'so out-of-stock rows are excluded here and counted under `out`.',
+    query: {
+      page: 1, limit: 30,
+      search: ['', 'free text; matches name, generic name, manufacturer'],
+      categoryId: ['', 'UUID; optional filter'],
+      stock: ['', 'low | out | near_expiry'],
+    },
   },
   'GET /api/v1/inventory/:medicineId/batches': {
     name: 'All batches for a medicine',
@@ -267,13 +286,44 @@ module.exports = {
   // â”€â”€ Suppliers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   'GET /api/v1/suppliers': {
     name: 'List suppliers',
-    description: 'Outstanding balances are merged in from the `supplier_balances` view â€” computed live, never stored.',
-    query: { includeInactive: ['false', 'owner only'] },
+    description:
+      'Paginated: `{ suppliers, pagination }`. Outstanding balances are merged in from the `supplier_balances` view — ' +
+      'computed live, never stored — and are now fetched only for the ids ON THIS PAGE. That view aggregates every ' +
+      'purchase line in the database, so pulling all of it to annotate thirty rows was the whole cost of this endpoint.\n\n' +
+      '`search` matches name, contact person and GST number. It is new: the UI has always sent one and this endpoint ' +
+      'silently ignored it, so the search box did nothing.\n\n' +
+      'For a dropdown, use `GET /suppliers/options` instead — it returns id and name only, which is all any ' +
+      'supplier `<select>` in the app reads.',
+    query: {
+      page: 1, limit: 30,
+      search: ['', 'free text; matches name, contact person, GST number'],
+      includeInactive: ['false', 'owner only'],
+    },
+  },
+  'GET /api/v1/suppliers/options': {
+    name: 'Supplier options (dropdown)',
+    description:
+      'Active suppliers as `{ id, name }`, name-ordered, bounded at 500. Both roles — every screen that uses it ' +
+      '(Add Batch, purchase orders, supplier returns, invoice review) is reachable by staff.\n\n' +
+      'Exists because five components fetched the whole `/suppliers` list — every column, plus a full ' +
+      '`supplier_balances` aggregation — to render `{id, name}` options, and not one of them reads phone, ' +
+      'GST number or credit terms.\n\n' +
+      'Active only: you cannot raise an order against a deactivated distributor, which is what every one of these ' +
+      'dropdowns is for.\n\n' +
+      '**Registered before `/:id`.** The other way round, the literal path binds to the id param, fails `isUUID` ' +
+      'and answers 422 about a malformed identifier — a routing bug wearing a validation bug\'s clothes. ' +
+      '`tests/pagination-routes.test.js` guards it.',
   },
   'GET /api/v1/suppliers/:id': { name: 'Get supplier', pathVars: { id: 'supplier_id' } },
   'POST /api/v1/suppliers': {
     name: 'Create supplier', role: OWNER,
-    description: '`credit_terms_days` drives the payment-due calculation on purchase orders.',
+    description:
+      '`credit_terms_days` drives the payment-due calculation on purchase orders.\n\n' +
+      '`phone` is genuinely optional (send `null`, `""` or omit it) and is **not** restricted to mobiles — ' +
+      'a supplier number is a letterhead detail, so STD landlines (`0836-2661234`), the two numbers ' +
+      'distributors print on one line, and `+ - ( ) /` punctuation are all accepted. ' +
+      'This is what Module 23\'s "Add and link" posts straight from an extracted invoice. ' +
+      'Customer and staff phones keep the stricter mobile rule — those are identities.',
     body: {
       name: 'MedPlus Distributors', phone: '9876543210', email: 'orders@medplus.example',
       gst_no: '29ABCDE1234F1Z5', credit_terms_days: 30,
@@ -352,7 +402,7 @@ module.exports = {
   },
   'DELETE /api/v1/purchases/:id/items/:itemId': {
     name: 'Remove line item from draft', role: OWNER,
-    description: 'The only DELETE verb in the API, and it only removes an unsent draft line â€” no business record is ever hard-deleted. **Not yet wired into the frontend.**',
+    description: 'The only DELETE verb in the API, and it only removes an unsent draft line â€” the only other permanent removal in the API is the owner deleting a bill (`POST /billing/:id/delete`). **Not yet wired into the frontend.**',
     pathVars: { id: 'purchase_id', itemId: 'purchase_item_id' },
   },
 
@@ -372,6 +422,44 @@ module.exports = {
     },
   },
   'GET /api/v1/billing/:id': { name: 'Get bill with items', pathVars: { id: 'bill_id' } },
+  'GET /api/v1/billing/delete-preview': {
+    name: 'Preview deleting bills by date', role: OWNER,
+    description:
+      'Read-only. What `POST /billing/delete-range` would remove for these India-time days: bill and line counts, the total, ' +
+      'how many sealed packs and loose units stay deducted from stock, and `blocked`, which lists every bill with a pending or ' +
+      'approved customer return (any one of them stops the delete).\n\n' +
+      'Send `bill_count` and `total_amount` back as `expected_count` and `expected_total` when deleting.',
+    query: { dateFrom: '2026-09-01', dateTo: '2026-09-13' },
+  },
+  'POST /api/v1/billing/delete-range': {
+    name: 'Delete bills by date', role: OWNER,
+    description:
+      '**Permanent.** Deletes every bill rung up on these India-time days, with their lines, rejected returns and adherence ' +
+      'acknowledgments, in one transaction (`delete_bills_in_range_atomic`, schema-38). **Stock is not returned:** neither ' +
+      'ledger is touched. Every sales figure is a live view, so totals, reports and customer history follow immediately.\n\n' +
+      'Refused with `409 BILL_HAS_RETURNS` (with `details.blocked`) if any bill has a pending or approved return, ' +
+      '`409 RANGE_CHANGED` if the range no longer matches the preview\'s `expected_count` / `expected_total`, ' +
+      '`404 NO_BILLS_IN_RANGE`, and `422 RANGE_TOO_LARGE` above 1000 bills. The audit log keeps the reason and a snapshot ' +
+      'of every deleted bill.',
+    body: {
+      dateFrom: '2026-09-01', dateTo: '2026-09-13', reason: 'Test bills from the setup week',
+      expected_count: 12, expected_total: 4520.5,
+    },
+  },
+  'GET /api/v1/billing/:id/delete-preview': {
+    name: 'Preview deleting a bill', role: OWNER,
+    description: 'Read-only. The same preview as the date-range one, for a single bill. `404 BILL_NOT_FOUND` if it does not exist.',
+    pathVars: { id: 'bill_id' },
+  },
+  'POST /api/v1/billing/:id/delete': {
+    name: 'Delete bill', role: OWNER,
+    description:
+      '**Permanent.** Deletes one bill with its lines, rejected returns and adherence acknowledgments (`delete_bill_atomic`, ' +
+      'schema-38). **Stock is not returned.** A reason of 5 to 500 characters is required. `409 BILL_HAS_RETURNS` (with ' +
+      '`details.blocked`) if the bill has a pending or approved return. The audit log keeps the reason and a snapshot of the bill.',
+    pathVars: { id: 'bill_id' },
+    body: { reason: 'Duplicate bill rung up by mistake' },
+  },
   'POST /api/v1/billing': {
     name: 'Create bill (sale)',
     description:
@@ -380,7 +468,7 @@ module.exports = {
       '2. **Duplicate lines merged.** Two lines for the same medicine are summed before allocation, so a cart cannot oversell one batch.\n' +
       '3. **FEFO allocation.** Nearest-expiry batch first, spilling into the next as needed. Staff never pick a batch.\n' +
       '4. **`create_bill_atomic()`** â€” one transaction that locks the batches, writes the bill, its items and the negative ledger entries.\n\n' +
-      'Prices are snapshotted per batch at sale time. **Bills are immutable** â€” there is no PATCH or DELETE; corrections go through Customer Returns.\n\n' +
+      'Prices are snapshotted per batch at sale time. **Bills cannot be edited** â€” there is no PATCH, and corrections go through Customer Returns. The one exception is the owner deleting bills outright (`POST /api/v1/billing/:id/delete`, or by date range), which never returns stock.\n\n' +
       '**Two denominations per line (Module 27).** `qty` counts whole sealed packs â€” strips, bottles, tubes â€” and is the denomination `inventory_ledger` and `medicines.unit` have always used. `loose_qty` counts single units out of an opened pack and is optional; omitting it is exactly the request this endpoint took before, and behaves identically.\n\n' +
       'A line needs a quantity in at least one of the two, and `qty` may be `0` when `loose_qty` is not. Loose units are only accepted for a medicine whose pack contents are **countable** â€” `pack_content_unit` of TABLET, CAPSULE or PIECE. A 100ML bottle or a 30GM tube answers `422 LOOSE_SALE_UNSUPPORTED`, because one millilitre is not a thing anyone dispenses.\n\n' +
       'Loose allocation is FEFO too, and spends already-open packs before breaking a new one: for each batch in expiry order it takes what is loose, then opens `ceil(remaining / contents)` packs â€” the minimum, never one per unit. Opening posts `-1 strip_opened` to `inventory_ledger` and `+contents strip_opened` to `loose_unit_ledger`, so the two ledgers reconcile and nothing changes denomination silently. Insufficient loose stock answers `409 INSUFFICIENT_LOOSE_STOCK`.\n\n' +
@@ -499,7 +587,23 @@ module.exports = {
   // â”€â”€ Expiry â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   'GET /api/v1/expiry/dashboard': {
     name: 'Expiry dashboard', role: OWNER,
-    description: 'Counts and stock value bucketed by urgency.',
+    description:
+      'Counts and stock value bucketed by urgency: `{ totals: { expired, critical, warning, watch, potential_loss } }`.\n\n' +
+      '**Returns no rows.** It used to ship every batch in the pharmacy pre-grouped into four arrays so the client ' +
+      'could call `.length` on them; the rows now come from `GET /expiry/batches`, one bucket and one page at a time. ' +
+      '`potential_loss` is still summed exactly — PostgREST has no SUM, so this reads two columns rather than thirty.',
+  },
+  'GET /api/v1/expiry/batches': {
+    name: 'Batches in one urgency bucket', role: OWNER,
+    description:
+      'The paged rows behind each dashboard tile. `urgency` is REQUIRED and must be one of ' +
+      '`expired`, `critical`, `warning`, `watch` — `ok` is not a bucket the dashboard offers.\n\n' +
+      'Ordered `exp_date, id`. The explicit order is not cosmetic: `expiry_summary` carries an `ORDER BY` inside ' +
+      'its own definition, Postgres does not guarantee that survives an outer LIMIT/OFFSET, and `exp_date` is not ' +
+      'unique — an unstable sort under paging repeats rows on one page and drops them from another.\n\n' +
+      'Returns `{ batches, pagination }`. There is no per-page loss total: it would be a figure about the page. ' +
+      'The whole-bucket value at risk is on `/expiry/dashboard`.',
+    query: { urgency: ['expired', 'required; expired | critical | warning | watch'], page: 1, limit: 30 },
   },
   'GET /api/v1/expiry/report': {
     name: 'Full expiry report', role: OWNER,
@@ -533,12 +637,25 @@ module.exports = {
   },
   'GET /api/v1/reports/purchases': {
     name: 'Purchase report', role: OWNER,
-    description: 'Spend by supplier over a date range.',
+    description:
+      'Spend by supplier over a date range. Returns `{ summary, flow, purchases, purchases_total, dateFrom, dateTo, generated_at }`.\n\n' +
+      '`summary` covers EVERY order in the window. `flow` is the same set in four columns, for the month-by-month ' +
+      'chart — bounding it would silently under-plot a month, which is worse than a wrong number because it looks ' +
+      'right. `purchases` is the detail table, capped at the 100 most recent; compare it against `purchases_total` ' +
+      'to know whether it was truncated.',
     query: { supplierId: ['', 'UUID'], dateFrom: '2026-08-01', dateTo: '2026-08-31' },
   },
   'GET /api/v1/reports/inventory': {
-    name: 'Inventory valuation', role: OWNER,
-    description: 'Stock on hand valued at cost and at selling price, with the spread between them.',
+    name: 'Inventory snapshot', role: OWNER,
+    description:
+      'Catalogue health plus the reorder list: `{ summary, reorder, reorder_total, generated_at }`.\n\n' +
+      '`summary` (`total_medicines`, `healthy`, `low_stock`, `out_of_stock`, `near_expiry`) is counted in the ' +
+      'database. `healthy` is derived by subtraction rather than counted, because `is_low_stock` is NULL where a ' +
+      'medicine has no threshold and an equality filter would miss those rows — leaving the stock-health bar not ' +
+      'summing to the catalogue.\n\n' +
+      '`reorder` is everything at or below its reorder threshold (which includes out-of-stock, since `is_low_stock` ' +
+      'is true at zero), lowest stock first, capped at 100. **The `medicines` key is gone** — this endpoint used to ' +
+      'return the entire active catalogue so the client could filter it into this same list.',
   },
   'GET /api/v1/reports/top-medicines': {
     name: 'Top-selling medicines', role: OWNER,

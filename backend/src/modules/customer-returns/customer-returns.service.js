@@ -83,7 +83,13 @@ async function createReturn({ bill_id, reason, refund_mode, notes, items }, crea
   const { data: cr, error } = await supabase.from('customer_returns')
     .insert({ return_number: rn, bill_id, customer_name: bill.customer_name, customer_phone: bill.customer_phone, reason: reason.trim(), refund_mode, notes: notes?.trim()||null, created_by: createdBy })
     .select().single();
-  if (error) throw new AppError('Failed to create return.', 500, 'DB_ERROR');
+  if (error) {
+    // The owner can delete the bill between the lookup above and this insert.
+    // The foreign key is what catches it: schema-38 locks the bill row, so this
+    // insert waits for the delete to commit and then fails here.
+    if (error.code === '23503') throw new AppError('This bill has been deleted.', 404, 'BILL_NOT_FOUND');
+    throw new AppError('Failed to create return.', 500, 'DB_ERROR');
+  }
 
   // Insert return items
   await supabase.from('customer_return_items').insert(

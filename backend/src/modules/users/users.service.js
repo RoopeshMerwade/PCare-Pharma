@@ -18,7 +18,27 @@ async function listUsers() {
     .order('created_at', { ascending: true });
 
   if (error) throw new AppError('Failed to fetch users.', 500, 'DB_ERROR');
-  return data;
+  return Promise.all((data || []).map(async (user) => ({ ...user, email: await authEmail(user.id) })));
+}
+
+// staff_summary is built from public.users, which has no email column — the
+// address lives only in auth.users, which PostgREST does not expose. Without
+// this, UsersPage rendered a blank line on every card and its reset dialog
+// promised "a link at undefined".
+//
+// One admin lookup per row, run in parallel; the staff limit keeps the list to
+// a handful. Best-effort per row, the same posture listSuppliers takes with
+// balances: an Auth hiccup leaves one email null rather than taking the whole
+// staff list down.
+async function authEmail(userId) {
+  try {
+    const { data, error } = await supabase.auth.admin.getUserById(userId);
+    if (error) throw error;
+    return data?.user?.email ?? null;
+  } catch (e) {
+    logger.warn({ userId, reason: e.message }, 'Could not read staff email from Supabase Auth');
+    return null;
+  }
 }
 
 async function getUserById(id) {

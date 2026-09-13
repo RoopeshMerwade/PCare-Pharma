@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../../lib/api';
 import { plural } from '../../lib/format';
+import { isContactPhone, CONTACT_PHONE_MESSAGE } from '../../lib/phone';
 import useResource from '../../hooks/useResource';
 import ResourcePage from '../../patterns/ResourcePage';
 import FormDialog from '../../patterns/FormDialog';
@@ -161,9 +162,9 @@ function SupplierModal({ supplier, open, onOpenChange, onSaved }) {
   const validate = () => {
     const found = {};
     if (!form.name.trim()) found.name = 'Enter the company name as it appears on their invoices.';
-    if (form.phone && !/^[6-9]\d{9}$/.test(form.phone.replace(/\s/g, ''))) {
-      found.phone = 'Enter a 10-digit Indian mobile number starting 6–9.';
-    }
+    // A supplier's number comes off their letterhead, so landlines with an STD
+    // code are normal and the old mobile-only rule rejected them. See lib/phone.js.
+    if (form.phone.trim() && !isContactPhone(form.phone)) found.phone = CONTACT_PHONE_MESSAGE;
     if (form.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) {
       found.email = 'Enter a valid email address, or leave it blank.';
     }
@@ -196,7 +197,9 @@ function SupplierModal({ supplier, open, onOpenChange, onSaved }) {
           <Input value={form.contact_person} onChange={set('contact_person')} placeholder="e.g. Rajesh K." />
         </Field>
         <Field label="Phone" hint="(optional)" error={errors.phone}>
-          <Input type="tel" inputMode="numeric" value={form.phone} onChange={set('phone')} placeholder="98xxxxxxx0" />
+          {/* inputMode="tel", not "numeric" — the numeric keypad has no "-", "+"
+              or "(", which is most of how a landline is written down. */}
+          <Input type="tel" inputMode="tel" value={form.phone} onChange={set('phone')} placeholder="0836-2661234 or 9845098450" />
         </Field>
       </div>
 

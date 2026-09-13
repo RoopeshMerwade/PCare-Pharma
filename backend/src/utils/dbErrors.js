@@ -48,6 +48,19 @@ const RPC_ERROR_MAP = {
   // going the other way, which is what Supplier Returns is for, and the
   // message has to say that rather than imply a scanning fault.
   NOT_A_TAX_INVOICE:     [422, 'NOT_A_TAX_INVOICE', 'Only a tax invoice can be taken into stock. Record a credit or debit note under Supplier Returns instead.'],
+
+  // ── schema-38: owner bill deletion. The service checks ownership, the reason
+  // and blocking returns before calling the RPC, so reaching these means the
+  // check was raced (a return raised, or a bill rung up inside the range, while
+  // the owner was confirming) or bypassed. The RPC is the final word.
+  FORBIDDEN:          [403, 'FORBIDDEN', 'Only an active owner can delete bills.'],
+  REASON_REQUIRED:    [422, 'REASON_REQUIRED', 'Give a reason of at least 5 characters for deleting.'],
+  BILL_NOT_FOUND:     [404, 'BILL_NOT_FOUND', 'That bill no longer exists.'],
+  BILL_HAS_RETURNS:   [409, 'BILL_HAS_RETURNS', 'A bill with a pending or approved customer return cannot be deleted.'],
+  INVALID_DATE_RANGE: [422, 'INVALID_DATE_RANGE', 'The start date must be on or before the end date.'],
+  NO_BILLS_IN_RANGE:  [404, 'NO_BILLS_IN_RANGE', 'There are no bills in that date range.'],
+  RANGE_CHANGED:      [409, 'RANGE_CHANGED', 'The bills in that range changed since you previewed them. Preview again.'],
+  RANGE_TOO_LARGE:    [422, 'RANGE_TOO_LARGE', 'Delete at most 1000 bills at once. Choose a shorter date range.'],
 };
 
 // Returns an AppError for a Supabase/Postgres error, or null if unrecognized

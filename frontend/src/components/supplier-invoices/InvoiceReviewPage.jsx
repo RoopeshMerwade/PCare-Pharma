@@ -63,7 +63,10 @@ export default function InvoiceReviewPage() {
   const approve = useConfirm();
 
   useEffect(() => {
-    api.get('/suppliers').then((res) => setSuppliers(res.data.suppliers || [])).catch(() => setSuppliers([]));
+    // /options: id + name, which is all the header <select> binds. A created
+    // supplier is appended to this list below; {id, name} is a subset of the
+    // row POST /suppliers returns, so that still works.
+    api.get('/suppliers/options').then((res) => setSuppliers(res.data.suppliers || [])).catch(() => setSuppliers([]));
   }, []);
 
   const readOnly = !invoice || invoice.status !== 'NEEDS_REVIEW';

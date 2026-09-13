@@ -1,7 +1,7 @@
 // ── Modules 09+10: Billing — routes + validation rules.
 
 const express = require('express');
-const { body, param } = require('express-validator');
+const { body, param, query } = require('express-validator');
 const controller = require('./billing.controller');
 const { validate } = require('../../middleware/validate');
 const { authenticate, authorize } = require('../../middleware/authenticate');
@@ -35,16 +35,49 @@ const createRules = [
   body('acknowledged_warnings.*.schedule_id').optional().isUUID(),
 ];
 
+/* Owner bill deletion (schema-38). The reason travels in a body, and the
+   frontend's api.delete() sends none, so these are POST actions — the same shape
+   as POST /users/:id/reset-password. */
+const DATE_ONLY = { format: 'YYYY-MM-DD', strictMode: true };
+
+const reasonRule = body('reason')
+  .isString().withMessage('Give a reason for deleting')
+  .bail().trim().isLength({ min: 5, max: 500 }).withMessage('The reason must be 5 to 500 characters');
+
+const rangePreviewRules = [
+  query('dateFrom').isDate(DATE_ONLY).withMessage('dateFrom must be a date, YYYY-MM-DD'),
+  query('dateTo').isDate(DATE_ONLY).withMessage('dateTo must be a date, YYYY-MM-DD'),
+];
+
+const rangeDeleteRules = [
+  body('dateFrom').isDate(DATE_ONLY).withMessage('dateFrom must be a date, YYYY-MM-DD'),
+  body('dateTo').isDate(DATE_ONLY).withMessage('dateTo must be a date, YYYY-MM-DD'),
+  reasonRule,
+  body('expected_count').isInt({ min: 1 }).withMessage('expected_count must be the bill count the preview showed'),
+  body('expected_total').isFloat({ min: 0 }).withMessage('expected_total must be the total the preview showed'),
+];
+
 const router = express.Router();
 router.use(authenticate);
 
 // Both roles: staff create bills, owner views all
 router.get('/totals', authorize('owner'), controller.totals);
+
+// These two literal paths MUST stay above '/:id'. Registered after it,
+// 'delete-preview' binds to :id, fails isUUID and answers 422 about a malformed
+// identifier. tests/bill-deletion-routes.test.js guards the order.
+router.get('/delete-preview', authorize('owner'), rangePreviewRules, validate, controller.previewRangeDeletion);
+router.post('/delete-range',  authorize('owner'), rangeDeleteRules, validate, controller.deleteRange);
+
 router.get('/',       controller.list);
 router.get('/:id',    [param('id').isUUID()], validate, controller.getOne);
 router.post('/',      createRules, validate, controller.create);
 
-// No PATCH/DELETE — bills are immutable after creation
-// Corrections via customer-returns module (Module 12)
+router.get('/:id/delete-preview', authorize('owner'), [param('id').isUUID()], validate, controller.previewBillDeletion);
+router.post('/:id/delete',        authorize('owner'), [param('id').isUUID(), reasonRule], validate, controller.deleteBill);
+
+// No PATCH — a bill's lines, prices and payment are never edited; corrections
+// go through customer returns (Module 12). The one exception to "a bill is
+// forever" is the owner deleting it outright, above, which never returns stock.
 
 module.exports = router;

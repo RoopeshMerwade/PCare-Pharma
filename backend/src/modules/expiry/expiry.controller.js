@@ -4,9 +4,16 @@
 const svc = require('./expiry.service');
 const { asyncHandler } = require('../../utils/asyncHandler');
 const { ApiResponse } = require('../../utils/ApiResponse');
+const { parsePagination } = require('../../utils/postgrest');
 
 const dashboard = asyncHandler(async (req, res) => {
   return ApiResponse.success(res, await svc.getExpiryDashboard());
+});
+
+// Rows for one bucket, paged. The summary lives on /dashboard.
+const batches = asyncHandler(async (req, res) => {
+  const { page, limit } = parsePagination(req.query, { defaultLimit: 30, maxLimit: 100 });
+  return ApiResponse.success(res, await svc.getExpiryBatches({ urgency: req.query.urgency, page, limit }));
 });
 
 const byUrgency = asyncHandler(async (req, res) => {
@@ -31,4 +38,4 @@ const report = asyncHandler(async (req, res) => {
   return ApiResponse.success(res, { report: await svc.getExpiryReport() });
 });
 
-module.exports = { dashboard, byUrgency, writeOff, bulkWriteOff, report };
+module.exports = { dashboard, batches, byUrgency, writeOff, bulkWriteOff, report };

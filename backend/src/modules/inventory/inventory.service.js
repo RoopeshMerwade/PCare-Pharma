@@ -5,7 +5,7 @@ const { supabase } = require('../../config/supabase');
 const { hasLooseUnits } = require('../../config/capabilities');
 const { AppError } = require('../../utils/AppError');
 const { logAudit } = require('../../utils/audit');
-const { ilikeTerm } = require('../../utils/postgrest');
+const { applySearch, paginationMeta } = require('../../utils/postgrest');
 const logger = require('../../utils/logger');
 
 const VALID_REASONS = ['purchase_receipt','opening_stock','sale','return_inward','return_outward','adjustment','expiry_writeoff','strip_opened'];
@@ -80,26 +80,78 @@ async function getBatchById(batchId) {
   return data;
 }
 
-// Overview: all medicines with aggregated stock — powers the Inventory page
-async function getInventoryOverview({ search, categoryId, stockFilter } = {}) {
-  let query = supabase
-    .from('medicines_with_stock')
-    .select('*')
-    .eq('is_active', true)
-    .order('name', { ascending: true });
+// Matches listMedicines. The two searched different column sets — inventory
+// two, medicines three — which meant a manufacturer name found a medicine on
+// one screen and nothing on the other.
+const INVENTORY_SEARCH_COLUMNS = ['name', 'generic_name', 'manufacturer'];
 
-  if (categoryId)          query = query.eq('category_id', categoryId);
-  if (stockFilter === 'low') query = query.eq('is_low_stock', true);
-  if (stockFilter === 'out') query = query.lte('total_stock', 0);
-  if (stockFilter === 'near_expiry') query = query.gt('near_expiry_batch_count', 0);
-  if (search?.trim()) {
-    const term = ilikeTerm(search);
-    query = query.or(`name.ilike.${term},generic_name.ilike.${term}`);
-  }
+/**
+ * The set of medicines this request is ABOUT, before the stock filter narrows
+ * it — the population the chip counts describe.
+ *
+ * A FACTORY, not a shared builder. postgrest-js filter methods mutate the
+ * builder's own URL in place and return `this`, so reusing one instance across
+ * the five parallel queries below would have each inherit the previous one's
+ * filters and every count would be wrong in a different direction.
+ */
+function overviewScope({ search, categoryId }, columns, options) {
+  let q = supabase.from('medicines_with_stock').select(columns, options).eq('is_active', true);
+  if (categoryId) q = q.eq('category_id', categoryId);
+  return applySearch(q, search, INVENTORY_SEARCH_COLUMNS);
+}
 
-  const { data, error } = await query;
-  if (error) throw new AppError('Failed to fetch inventory.', 500, 'DB_ERROR');
-  return data;
+/**
+ * One page of the catalogue with stock, plus the counts the alert chips need.
+ *
+ * The stats are scoped to `search` and `categoryId` but NOT to `stockFilter`,
+ * and that is load-bearing rather than an oversight: the chips SET the stock
+ * filter, so a count narrowed by it would redraw the moment you clicked one —
+ * "12 running low" would become low=12, out=0, near=0 and the other two chips
+ * would vanish. A control cannot be used to navigate if using it changes what
+ * it says.
+ */
+async function getInventoryOverview({ search, categoryId, stockFilter, page = 1, limit = 30 } = {}) {
+  const HEAD = { count: 'exact', head: true };
+  const offset = (page - 1) * limit;
+  const scope = { search, categoryId };
+
+  // `.order('id')` is not decoration. medicines.name is not unique — only
+  // (name, manufacturer, pack) is — so name alone is a partial order, and a
+  // partial order under LIMIT/OFFSET repeats rows on one page and drops them
+  // from another.
+  let rowsQuery = overviewScope(scope, '*', { count: 'exact' })
+    .order('name', { ascending: true })
+    .order('id', { ascending: true })
+    .range(offset, offset + limit - 1);
+
+  // `is_low_stock` is `coalesce(total_stock,0) < low_stock_threshold`, which is
+  // TRUE at zero stock — so "low" silently included "out". domain/stock.js says
+  // out wins over low, so without the guard the chip would read N and filter to
+  // a list of N + out rows.
+  if (stockFilter === 'low')         rowsQuery = rowsQuery.eq('is_low_stock', true).gt('total_stock', 0);
+  if (stockFilter === 'out')         rowsQuery = rowsQuery.lte('total_stock', 0);
+  if (stockFilter === 'near_expiry') rowsQuery = rowsQuery.gt('near_expiry_batch_count', 0);
+
+  const [rowsRes, totalRes, outRes, lowRes, nearRes] = await Promise.all([
+    rowsQuery,
+    overviewScope(scope, '*', HEAD),
+    overviewScope(scope, '*', HEAD).lte('total_stock', 0),
+    overviewScope(scope, '*', HEAD).eq('is_low_stock', true).gt('total_stock', 0),
+    overviewScope(scope, '*', HEAD).gt('near_expiry_batch_count', 0),
+  ]);
+
+  if (rowsRes.error) throw new AppError('Failed to fetch inventory.', 500, 'DB_ERROR');
+
+  // A failed COUNT must not take the list down — the same rule listSuppliers
+  // already applies to its balance merge. null renders as an absent chip,
+  // which is honest; 0 would be a claim.
+  const n = (res) => (res.error ? null : res.count ?? 0);
+
+  return {
+    inventory: rowsRes.data,
+    pagination: paginationMeta(page, limit, rowsRes.count),
+    stats: { total: n(totalRes), out: n(outRes), low: n(lowRes), near: n(nearRes) },
+  };
 }
 
 // Expired batches — owner dashboard

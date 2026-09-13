@@ -51,6 +51,40 @@ function zeroFilledTrend(rows) {
   return out;
 }
 
+/**
+ * Bill count and revenue for a date window.
+ *
+ * The RPC is one row aggregated in Postgres over daily_sales_summary; the
+ * fallback is every bill in the window fetched and summed here — which is what
+ * this used to do unconditionally for "week" and "month".
+ *
+ * The fallback is not defensive dressing. `get_sales_totals_summary` lives in
+ * schema-32-in-db-aggregations.sql, which is NOT listed in
+ * docs/MIGRATION-ORDER.md, so a correctly-migrated database may well not have
+ * it. Same rule getTopMedicines already applies to top_medicines_by_qty: the
+ * cost of a missing migration is a slow tile, never a blank one.
+ *
+ * The two agree exactly. daily_sales_summary buckets on
+ * `created_at at time zone 'Asia/Kolkata'` and sums bills_with_totals.total
+ * with no status filter (settings/schema-15-20.sql:35-46), which is precisely
+ * what the fallback computes over the same IST-anchored window.
+ */
+async function salesTotals(from, to) {
+  try {
+    const { data, error } = await supabase.rpc('get_sales_totals_summary', { p_from: from, p_to: to });
+    if (!error && data) {
+      return { bill_count: Number(data.count) || 0, total_sales: Number(data.total) || 0 };
+    }
+  } catch {
+    // fall through to the direct query
+  }
+
+  const { data } = await supabase.from('bills_with_totals').select('total')
+    .gte('created_at', getISTStartOfDay(from)).lte('created_at', getISTEndOfDay(to));
+  const rows = data || [];
+  return { bill_count: rows.length, total_sales: rows.reduce((s, b) => s + parseFloat(b.total || 0), 0) };
+}
+
 // ── OWNER DASHBOARD
 async function getOwnerDashboard(ownerId) {
   const [
@@ -62,12 +96,10 @@ async function getOwnerDashboard(ownerId) {
     // Today's sales
     supabase.from('bills_with_totals').select('total, payment_mode, created_by, created_by_name, item_count')
       .gte('created_at', getISTStartOfDay(today())).lte('created_at', getISTEndOfDay(today())),
-    // This week
-    supabase.from('bills_with_totals').select('total')
-      .gte('created_at', getISTStartOfDay(weekStart())).lte('created_at', getISTEndOfDay(today())),
-    // This month
-    supabase.from('bills_with_totals').select('total')
-      .gte('created_at', getISTStartOfDay(monthStart())).lte('created_at', getISTEndOfDay(today())),
+    // This week — aggregated in the database, not fetched and summed here
+    salesTotals(weekStart(), today()),
+    // This month — same
+    salesTotals(monthStart(), today()),
     // Last 14 days, day by day — sparklines and the revenue trend chart
     supabase.from('daily_sales_summary')
       .select('sale_date, bill_count, total_revenue, cash_total, upi_total, credit_total, card_total')
@@ -130,8 +162,9 @@ async function getOwnerDashboard(ownerId) {
 
   const staffSales = Object.values(staffMap).sort((a, b) => b.total_sales - a.total_sales);
 
-  const weekBills  = safe(weekSales, { data: [] }).data || [];
-  const monthBills = safe(monthSales, { data: [] }).data || [];
+  const ZERO_TOTALS = { bill_count: 0, total_sales: 0 };
+  const weekTotals  = safe(weekSales, ZERO_TOTALS);
+  const monthTotals = safe(monthSales, ZERO_TOTALS);
 
   const trend = zeroFilledTrend(safe(trendData, { data: [] }).data);
   // Pin the trend's endpoint to the figures computed above from
@@ -161,14 +194,8 @@ async function getOwnerDashboard(ownerId) {
       payment_breakdown: payModes,
       staff_sales: staffSales,
     },
-    week: {
-      bill_count:  weekBills.length,
-      total_sales: weekBills.reduce((s,b) => s + parseFloat(b.total||0), 0),
-    },
-    month: {
-      bill_count:  monthBills.length,
-      total_sales: monthBills.reduce((s,b) => s + parseFloat(b.total||0), 0),
-    },
+    week:  { bill_count: weekTotals.bill_count,  total_sales: weekTotals.total_sales },
+    month: { bill_count: monthTotals.bill_count, total_sales: monthTotals.total_sales },
     trend: {
       days: TREND_DAYS,
       rows: trend,   // zero-filled, ascending; last row always equals `today`
@@ -240,4 +267,6 @@ async function getStaffDashboard(staffId) {
   };
 }
 
-module.exports = { getOwnerDashboard, getStaffDashboard };
+// salesTotals is exported for tests/unit/dashboard-sales-totals.test.js, which
+// pins that the RPC path and the fallback path agree.
+module.exports = { getOwnerDashboard, getStaffDashboard, salesTotals };

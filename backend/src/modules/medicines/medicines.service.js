@@ -5,7 +5,7 @@ const { supabase } = require('../../config/supabase');
 const { hasLooseUnits } = require('../../config/capabilities');
 const { AppError } = require('../../utils/AppError');
 const { logAudit } = require('../../utils/audit');
-const { ilikeTerm } = require('../../utils/postgrest');
+const { ilikeTerm, applySearch, paginationMeta } = require('../../utils/postgrest');
 const logger = require('../../utils/logger');
 
 // Must stay in step with the medicines_unit_check constraint. 'tablets' was
@@ -32,37 +32,65 @@ async function searchColumns() {
 
 // ── READ ──────────────────────────────────────────────────
 
-async function listMedicines({ categoryId, stockFilter, search, includeInactive = false, page = 1, limit = 50 } = {}) {
-  const offset = (page - 1) * limit;
+// Search across name, generic_name, manufacturer.
+// NOTE: this was previously textSearch('name,generic_name,manufacturer', …)
+// — a comma list is not a real column, so every list request with a search
+// term 500'd. ilike matches the /medicines/search endpoint's behavior.
+const LIST_SEARCH_COLUMNS = ['name', 'generic_name', 'manufacturer'];
 
-  let query = supabase
-    .from('medicines_with_stock')
-    .select('*', { count: 'exact' })
+/**
+ * The population this request is about, before the stock filter narrows it.
+ *
+ * A factory rather than a shared builder: postgrest-js filter methods mutate
+ * the builder in place and return `this`, so one instance reused across the
+ * parallel counts below would have each inherit the previous one's filters.
+ *
+ * `includeInactive` belongs in here, not outside it, so the stat tiles and the
+ * rows beneath them always describe the same set of medicines.
+ */
+function medicineScope({ search, categoryId, includeInactive }, columns, options) {
+  let q = supabase.from('medicines_with_stock').select(columns, options);
+  if (!includeInactive) q = q.eq('is_active', true);
+  if (categoryId)       q = q.eq('category_id', categoryId);
+  return applySearch(q, search, LIST_SEARCH_COLUMNS);
+}
+
+async function listMedicines({ categoryId, stockFilter, search, includeInactive = false, page = 1, limit = 50 } = {}) {
+  const HEAD = { count: 'exact', head: true };
+  const offset = (page - 1) * limit;
+  const scope = { search, categoryId, includeInactive };
+
+  // `.order('id')` makes the sort total. medicines.name is not unique, and a
+  // partial order under LIMIT/OFFSET can repeat a row on page 2 that page 1
+  // already showed.
+  let query = medicineScope(scope, '*', { count: 'exact' })
     .order('name', { ascending: true })
+    .order('id', { ascending: true })
     .range(offset, offset + limit - 1);
 
-  if (!includeInactive) query = query.eq('is_active', true);
-  if (categoryId)       query = query.eq('category_id', categoryId);
-
-  // Stock filter: low | out | ok
-  if (stockFilter === 'low') query = query.eq('is_low_stock', true);
+  // Stock filter: low | out. `is_low_stock` is `total_stock < threshold`, which
+  // is TRUE at zero — so "low" used to include "out". domain/stock.js ranks out
+  // above low, and the tile beside this list counts them separately.
+  if (stockFilter === 'low') query = query.eq('is_low_stock', true).gt('total_stock', 0);
   if (stockFilter === 'out') query = query.lte('total_stock', 0);
 
-  // Search across name, generic_name, manufacturer.
-  // NOTE: this was previously textSearch('name,generic_name,manufacturer', …)
-  // — a comma list is not a real column, so every list request with a search
-  // term 500'd. ilike matches the /medicines/search endpoint's behavior.
-  if (search?.trim()) {
-    const term = ilikeTerm(search);
-    query = query.or(`name.ilike.${term},generic_name.ilike.${term},manufacturer.ilike.${term}`);
-  }
+  const [rowsRes, totalRes, lowRes, outRes, activeRes] = await Promise.all([
+    query,
+    medicineScope(scope, '*', HEAD),
+    medicineScope(scope, '*', HEAD).eq('is_low_stock', true).gt('total_stock', 0),
+    medicineScope(scope, '*', HEAD).lte('total_stock', 0),
+    medicineScope(scope, '*', HEAD).eq('is_active', true),
+  ]);
 
-  const { data, error, count } = await query;
-  if (error) throw new AppError('Failed to fetch medicines.', 500, 'DB_ERROR');
+  if (rowsRes.error) throw new AppError('Failed to fetch medicines.', 500, 'DB_ERROR');
+
+  // A failed count leaves that one tile unknown rather than taking the list down.
+  const n = (res) => (res.error ? null : res.count ?? 0);
 
   return {
-    medicines: data,
-    pagination: { page, limit, total: count, pages: Math.ceil(count / limit) }
+    medicines: rowsRes.data,
+    pagination: paginationMeta(page, limit, rowsRes.count),
+    stats: { total: n(totalRes), low: n(lowRes), out: n(outRes), active: n(activeRes) },
   };
 }
 

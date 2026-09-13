@@ -154,4 +154,80 @@ async function createBill({ customer_name, customer_phone, customer_id, payment_
   return bill;
 }
 
-module.exports = { listBills, getBillById, createBill, getSalesTotals };
+// ── DELETE (owner only, permanent — schema-38) ───────────
+//
+// The one exception to "a bill is forever". Deleting removes the bill, its
+// lines, any rejected returns and its adherence acknowledgments. It NEVER
+// touches inventory_ledger or loose_unit_ledger, so the stock a bill sold stays
+// sold. Every total, report and customer figure is computed live from bills and
+// bill_items, so they all follow on their own.
+//
+// There is no logAudit call here, on purpose: the RPC writes the audit row —
+// with a snapshot of every deleted bill — in the same transaction as the
+// delete. utils/audit.js is fire-and-forget, which is the wrong guarantee for
+// an irreversible act.
+
+function requireOwner(actor) {
+  if (!actor || !actor.id || !actor.role) {
+    throw new AppError('Authorisation context missing.', 500, 'ACTOR_REQUIRED');
+  }
+  if (actor.role !== 'owner') throw new AppError('Only the owner can delete bills.', 403, 'FORBIDDEN');
+}
+
+// The RPC re-checks returns under a row lock and is the final word. This read
+// exists so the refusal can NAME the returns in the way, which an exception
+// raised inside Postgres cannot carry.
+function refuseIfBlocked(preview) {
+  if (preview.blocked?.length) {
+    throw new AppError(
+      'Bills with a pending or approved customer return cannot be deleted.',
+      409, 'BILL_HAS_RETURNS', { blocked: preview.blocked }
+    );
+  }
+}
+
+async function previewBillDeletion(id) {
+  const preview = await repo.previewBillDeletion([id]);
+  if (!preview.bill_count) throw new AppError('Bill not found.', 404, 'BILL_NOT_FOUND');
+  return preview;
+}
+
+async function previewRangeDeletion(dateFrom, dateTo) {
+  // YYYY-MM-DD strings (the route validates the format) compare correctly as text.
+  if (dateFrom > dateTo) {
+    throw new AppError('The start date must be on or before the end date.', 422, 'INVALID_DATE_RANGE');
+  }
+  return repo.previewRangeDeletion(dateFrom, dateTo);
+}
+
+async function deleteBill(id, reason, actor, ctx = {}) {
+  requireOwner(actor);
+  refuseIfBlocked(await previewBillDeletion(id));
+
+  const result = await repo.deleteBillAtomic({
+    billId: id, actorId: actor.id, reason, ip: ctx.ip, userAgent: ctx.userAgent,
+  });
+  logger.info({ actorId: actor.id, billId: id, billNumbers: result.bill_numbers, total: result.total_amount },
+    'Bill deleted (stock not returned)');
+  return result;
+}
+
+async function deleteBillsInRange({ dateFrom, dateTo, reason, expectedCount, expectedTotal }, actor, ctx = {}) {
+  requireOwner(actor);
+  const preview = await previewRangeDeletion(dateFrom, dateTo);
+  if (!preview.bill_count) throw new AppError('There are no bills in that date range.', 404, 'NO_BILLS_IN_RANGE');
+  refuseIfBlocked(preview);
+
+  const result = await repo.deleteBillsInRangeAtomic({
+    dateFrom, dateTo, actorId: actor.id, reason, expectedCount, expectedTotal,
+    ip: ctx.ip, userAgent: ctx.userAgent,
+  });
+  logger.info({ actorId: actor.id, dateFrom, dateTo, deleted: result.deleted_bills, total: result.total_amount },
+    'Bills deleted by date range (stock not returned)');
+  return result;
+}
+
+module.exports = {
+  listBills, getBillById, createBill, getSalesTotals,
+  previewBillDeletion, previewRangeDeletion, deleteBill, deleteBillsInRange,
+};

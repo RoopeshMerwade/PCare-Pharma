@@ -31,7 +31,11 @@ export default function InventoryPage() {
   const resource = useResource({
     endpoint: '/inventory',
     initialFilters: { search: '', categoryId: '', stock: initialStock },
-    select: (res) => ({ rows: res.data.inventory, pagination: res.data.pagination }),
+    select: (res) => ({
+      rows: res.data.inventory,
+      pagination: res.data.pagination,
+      meta: { stats: res.data.stats },
+    }),
   });
 
   useEffect(() => {
@@ -45,10 +49,18 @@ export default function InventoryPage() {
     api.get('/categories').then((r) => setCategories(r.data.categories)).catch(() => {});
   }, []);
 
+  /* Whole-catalogue counts from the server, scoped to the search and category
+     but deliberately NOT to the stock filter — these chips SET that filter, so
+     a count that changed because you clicked it could not be used to navigate.
+
+     The ?? fallbacks are the page's old row-derived arithmetic. They cover an
+     older backend and a count query that failed on its own (the service sends
+     null rather than 0 for that, so an unknown chip is absent, not a claim). */
+  const stats = resource.meta?.stats;
   const alerts = {
-    out: resource.rows.filter((m) => stockStatus(m).key === 'out').length,
-    low: resource.rows.filter((m) => stockStatus(m).key === 'low').length,
-    near: resource.rows.filter((m) => m.near_expiry_batch_count > 0).length,
+    out: stats?.out ?? resource.rows.filter((m) => stockStatus(m).key === 'out').length,
+    low: stats?.low ?? resource.rows.filter((m) => stockStatus(m).key === 'low').length,
+    near: stats?.near ?? resource.rows.filter((m) => m.near_expiry_batch_count > 0).length,
   };
 
   const columns = [
@@ -99,7 +111,7 @@ export default function InventoryPage() {
     <>
       <ResourcePage
         title="Inventory"
-        subtitle={`${count(resource.pagination.total ?? resource.rows.length)} medicines stocked`}
+        subtitle={`${count(stats?.total ?? resource.pagination.total ?? resource.rows.length)} medicines stocked`}
         resource={resource}
         columns={columns}
         itemNoun="medicines"

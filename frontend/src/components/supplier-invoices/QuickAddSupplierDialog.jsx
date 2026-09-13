@@ -1,5 +1,6 @@
 ﻿import { useEffect, useState } from 'react';
 import { api } from '../../lib/api';
+import { isContactPhone, CONTACT_PHONE_MESSAGE } from '../../lib/phone';
 import FormDialog from '../../patterns/FormDialog';
 import Field from '../../ui/Field';
 import Input, { NumericInput } from '../../ui/Input';
@@ -48,6 +49,10 @@ export default function QuickAddSupplierDialog({
     const found = {};
     const name = form.name.trim();
     if (name.length < 2) found.name = 'Give the supplier a name of at least two characters.';
+    // The phone arrives pre-filled from the extracted letterhead, so it can be
+    // whatever the scan made of it — flag it here rather than letting the
+    // server's 422 be the first the reviewer hears of it.
+    if (form.phone.trim() && !isContactPhone(form.phone)) found.phone = CONTACT_PHONE_MESSAGE;
     setErrors(found);
     return Object.keys(found).length === 0;
   };
@@ -98,8 +103,10 @@ export default function QuickAddSupplierDialog({
             autoComplete="off"
           />
         </Field>
-        <Field label="Phone" hint="(optional)">
+        <Field label="Phone" hint="(optional)" error={errors.phone}>
           <Input
+            type="tel"
+            inputMode="tel"
             value={form.phone}
             onChange={(e) => set('phone')(e.target.value)}
             placeholder="Phone or mobile"

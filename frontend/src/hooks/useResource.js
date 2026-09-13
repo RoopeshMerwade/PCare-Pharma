@@ -25,6 +25,16 @@ export default function useResource({
 }) {
   const [rows, setRows] = useState([]);
   const [pagination, setPagination] = useState({ page: 1, pages: 1, total: 0, limit: pageSize });
+  /* Anything the endpoint returns beside rows and pagination — catalogue-wide
+     stat counts, so far. It rides the SAME response as the rows on purpose: a
+     separate stats fetch would carry its own debounce and its own staleness
+     guard, so after every keystroke the counts would describe the previous
+     search while the table below already showed the new one. On Inventory
+     those counts are clickable chips that SET a filter, so a count that
+     disagrees with the list under it is not a cosmetic lag.
+
+     Named `meta` rather than `stats` to keep the hook domain-neutral. */
+  const [meta, setMeta] = useState(null);
   const [filters, setFilters] = useState(initialFilters);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
@@ -58,10 +68,12 @@ export default function useResource({
         const picked = selectRef.current ? selectRef.current(res) : { rows: res.data, pagination: res.data?.pagination };
         setRows(picked.rows || []);
         setPagination(picked.pagination || { page: currentPage, pages: 1, total: (picked.rows || []).length, limit: pageSize });
+        setMeta(picked.meta ?? null);
       } catch (err) {
         if (id !== requestId.current) return;
         setError(err);
         setRows([]);
+        setMeta(null);
       } finally {
         if (id === requestId.current) setLoading(false);
       }
@@ -107,7 +119,7 @@ export default function useResource({
   const isFiltered = Object.values(filters).some((v) => v !== '' && v !== null && v !== undefined);
 
   return {
-    rows, pagination, loading, error,
+    rows, pagination, meta, loading, error,
     filters, setFilter, setFilters, resetFilters, isFiltered,
     page, goToPage, reload,
   };

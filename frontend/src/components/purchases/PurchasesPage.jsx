@@ -43,7 +43,8 @@ export default function PurchasesPage() {
   });
 
   useEffect(() => {
-    api.get('/suppliers').then((r) => setSuppliers(r.data.suppliers)).catch(() => {});
+    // /options: id + name for the dropdown. The list endpoint paginates now.
+    api.get('/suppliers/options').then((r) => setSuppliers(r.data.suppliers)).catch(() => {});
   }, []);
 
   const handleSend = async (po) => {

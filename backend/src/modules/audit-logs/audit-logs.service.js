@@ -19,6 +19,8 @@ const ACTION_LABELS = {
   purchase_created: 'Created purchase order', purchase_sent: 'Sent purchase order',
   purchase_received: 'Received goods from supplier',
   bill_created: 'Created bill (sale)',
+  bill_deleted: 'Deleted bill (stock not returned)',
+  bills_deleted_in_range: 'Deleted bills by date range (stock not returned)',
   customer_created: 'Registered customer', customer_updated: 'Updated customer',
   customer_return_created: 'Submitted customer return', customer_return_approved: 'Approved customer return',
   customer_return_rejected: 'Rejected customer return',
