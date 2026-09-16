@@ -1,0 +1,93 @@
+name: Deploy
+
+# Runs the same checks the CLAUDE.md "gate to run before committing" describes,
+# then — only for a push landing on main, or a manual run — deploys by SSHing
+# into the EC2 box as the `pcare` user. That key's authorized_keys entry is
+# restricted with a forced command to /srv/pcare/deploy.sh: whatever this
+# workflow sends over SSH is ignored server-side, so a leaked DEPLOY_SSH_KEY
+# secret can only ever re-run that one script, never an arbitrary command.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+jobs:
+  backend-tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      # No TEST_OWNER_EMAIL/TEST_STAFF_* credentials exist for this project
+      # (see CLAUDE.md), so the full integration suite (`npm test`) can't run
+      # here. tests/unit is pure, and these two supplier-invoice suites are
+      # hermetic by design (stub auth, a Supabase client that throws if
+      # queried, a mocked fetch) — CLAUDE.md calls out that both "run in CI
+      # without secrets". A dummy .env only satisfies env.js's startup
+      # validation; nothing here touches a real Supabase project.
+      - name: Write dummy backend/.env for config validation
+        run: |
+          cat > .env <<'EOF'
+          SUPABASE_URL=https://dummy.supabase.co
+          SUPABASE_SERVICE_KEY=dummy-service-key
+          SUPABASE_ANON_KEY=dummy-anon-key
+          FRONTEND_URL=http://localhost:3000
+          NODE_ENV=development
+          PORT=4000
+          EOF
+      - run: npx jest tests/unit tests/supplier-invoice-routes.test.js tests/supplier-invoice-extraction.test.js --runInBand
+
+  frontend-check:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run check   # lint + test + build
+
+  deploy:
+    needs: [backend-tests, frontend-check]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: pcare-production-deploy
+      cancel-in-progress: false
+    steps:
+      - name: SSH deploy
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
+          # Pinned host key for 15.206.126.145 (pcare-pharma.com), captured
+          # directly from the box rather than trust-on-first-use via
+          # ssh-keyscan at CI time. Re-pin here if the server is ever rebuilt.
+          echo '15.206.126.145 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINm8SfLtI7POaXBYYUmH1/MsqiX4evRuwSKVgpEEVpsE' > ~/.ssh/known_hosts
+
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "$DEPLOY_USER@$DEPLOY_HOST" "deploy ${{ github.sha }}"
+
+      - name: Verify the site is up
+        run: |
+          sleep 3
+          curl -fsS https://pcare-pharma.com/ready
