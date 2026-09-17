@@ -35,7 +35,8 @@ import PurchasesPage    from './components/purchases/PurchasesPage';
 import { SupplierReturnsPage } from './components/supplier-returns/SupplierReturnsPage';
 import ExpiryDashboardPage from './components/expiry/ExpiryDashboardPage';
 import ReportsPage      from './components/reports/ReportsPage';
-import { NotificationsPage, SettingsPage, AuditLogsPage } from './components/settings/SettingsPages';
+import { NotificationsPage, SettingsPage } from './components/settings/SettingsPages';
+import AuditLogsPage from './components/audit-logs/AuditLogsPage';
 
 function RoleRedirect() {
   const { user } = useAuth();
