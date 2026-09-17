@@ -71,8 +71,10 @@ jobs:
     steps:
       - name: SSH deploy
         env:
-          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
-          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          # Deploy target is fixed for production; avoid auth failures caused by
+          # stale/mismatched host or user secrets.
+          DEPLOY_HOST: 15.206.126.145
+          DEPLOY_USER: pcare
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
         run: |
           set -euo pipefail
