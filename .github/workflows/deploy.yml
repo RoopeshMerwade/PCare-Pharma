@@ -80,12 +80,29 @@ jobs:
           printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
 
+          # Fail here, not at the connection, if the secret was pasted with
+          # literal \n, CRLF line endings, a passphrase, or a public key by
+          # mistake. Otherwise the only symptom is `error in libcrypto`
+          # followed by `Permission denied (publickey)`, which reads like the
+          # server rejected us when in fact the key never parsed. Prints only
+          # the derived public key, which is not sensitive — and it goes to
+          # /dev/null anyway.
+          ssh-keygen -y -f ~/.ssh/deploy_key >/dev/null
+
           # Pinned host key for 15.206.126.145 (pcare-pharma.com), captured
           # directly from the box rather than trust-on-first-use via
           # ssh-keyscan at CI time. Re-pin here if the server is ever rebuilt.
           echo '15.206.126.145 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINm8SfLtI7POaXBYYUmH1/MsqiX4evRuwSKVgpEEVpsE' > ~/.ssh/known_hosts
 
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "$DEPLOY_USER@$DEPLOY_HOST" "deploy ${{ github.sha }}"
+          # IdentitiesOnly=yes so ssh offers this key and nothing else — a
+          # runner with an agent-loaded identity would otherwise try that
+          # first and fail against the forced-command entry for a reason that
+          # has nothing to do with the key we just wrote.
+          ssh -i ~/.ssh/deploy_key \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            "deploy ${{ github.sha }}"
 
       - name: Verify the site is up
         run: |
