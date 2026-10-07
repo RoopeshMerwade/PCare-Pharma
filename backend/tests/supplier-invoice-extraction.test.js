@@ -33,7 +33,7 @@ const okBody = (obj, extra = {}) => ({
 
 afterEach(() => { delete global.fetch; jest.clearAllMocks(); });
 
-test('sends inlineData + responseSchema + temperature 0, and keys go in the header not the URL', async () => {
+test('sends inlineData + responseSchema without deprecated sampling params, and keys go in the header not the URL', async () => {
   let captured;
   global.fetch = jest.fn(async (url, init) => { captured = { url, init }; return okBody({ line_items: [] }); });
 
@@ -47,7 +47,11 @@ test('sends inlineData + responseSchema + temperature 0, and keys go in the head
   expect(captured.init.headers['x-goog-api-key']).toBe('test-key');
 
   const body = JSON.parse(captured.init.body);
-  expect(body.generationConfig.temperature).toBe(0);
+  expect(body.generationConfig).not.toHaveProperty('temperature');
+  expect(body.generationConfig).not.toHaveProperty('topP');
+  expect(body.generationConfig).not.toHaveProperty('topK');
+  expect(body.generationConfig).not.toHaveProperty('top_p');
+  expect(body.generationConfig).not.toHaveProperty('top_k');
   expect(body.generationConfig.responseMimeType).toBe('application/json');
   expect(body.generationConfig.responseSchema.properties.line_items.type).toBe('ARRAY');
   const parts = body.contents[0].parts;

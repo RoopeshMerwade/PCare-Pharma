@@ -14,10 +14,10 @@
 //     exactly this shape, so the normaliser downstream deals with wrong VALUES
 //     (which a human then fixes) and never with wrong STRUCTURE.
 //
-//   · temperature 0 and an explicit instruction to emit null. A model that
-//     guesses an unreadable batch number is worse than useless here — a wrong
-//     batch number that looks plausible passes review, reaches the ledger, and
-//     is then the number a recall is checked against.
+//   · explicit nulls for unreadable fields. A model that guesses an unreadable
+//     batch number is worse than useless here — a wrong batch number that looks
+//     plausible passes review, reaches the ledger, and is then the number a
+//     recall is checked against.
 
 const config = require('../../config/env');
 const { AppError } = require('../../utils/AppError');
@@ -307,9 +307,6 @@ async function extractInvoice(buffer, mimeType) {
       ],
     }],
     generationConfig: {
-      // Transcription, not composition. Any sampling temperature above zero is
-      // asking the model to be creative about a batch number.
-      temperature: 0,
       responseMimeType: 'application/json',
       responseSchema: RESPONSE_SCHEMA,
       maxOutputTokens: config.gemini.maxOutputTokens,
