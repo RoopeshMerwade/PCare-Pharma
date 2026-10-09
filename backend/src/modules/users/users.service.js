@@ -131,10 +131,14 @@ async function updateUser(id, updates, requestingUser) {
 
   if (!isOwner && !isSelf) throw new AppError('Forbidden.', 403, 'FORBIDDEN');
 
-  // Staff can only update their own name, phone, avatar
-  const allowedForSelf = ['full_name', 'phone', 'avatar_url'];
-  const safeUpdates = isOwner ? updates : Object.fromEntries(
-    Object.entries(updates).filter(([k]) => allowedForSelf.includes(k))
+  // Profile fields only — for the owner too. The owner path used to write the
+  // whole request body, so PATCH /users/:id { is_active: false } skipped the
+  // CANNOT_DEACTIVATE_OWNER guard in setActiveStatus (an owner could lock the
+  // only owner account out), and any other column on the row (id, created_at)
+  // was writable. Status changes go through /activate and /deactivate.
+  const editableFields = ['full_name', 'phone', 'avatar_url'];
+  const safeUpdates = Object.fromEntries(
+    Object.entries(updates).filter(([k]) => editableFields.includes(k))
   );
 
   if (Object.keys(safeUpdates).length === 0) throw new AppError('No updatable fields provided.', 422, 'NO_FIELDS');
