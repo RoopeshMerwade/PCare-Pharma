@@ -51,6 +51,18 @@ async function getReturnById(id, actor) {
 async function createReturn({ bill_id, reason, refund_mode, notes, items }, createdBy) {
   if (!items?.length) throw new AppError('At least one return item is required.', 422, 'NO_ITEMS');
 
+  // The per-line check below compares each line against returns ALREADY on
+  // file, not against its siblings in this request — so the same bill item
+  // listed twice (5 + 5 against 5 sold) passed both times and staged a return
+  // for double the quantity. One line per bill item closes that.
+  const seen = new Set();
+  for (const item of items) {
+    if (seen.has(item.bill_item_id)) {
+      throw new AppError('Each bill item can appear only once in a return.', 422, 'DUPLICATE_RETURN_ITEM');
+    }
+    seen.add(item.bill_item_id);
+  }
+
   // Validate bill exists
   const { data: bill } = await supabase.from('bills').select('id, customer_name, customer_phone').eq('id', bill_id).single();
   if (!bill) throw new AppError('Original bill not found.', 404, 'BILL_NOT_FOUND');
