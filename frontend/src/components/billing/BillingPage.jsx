@@ -408,35 +408,50 @@ function LineItem({ item, index, onQtyChange, onLooseQtyChange, onRemove, onSwap
   const exceedsLoose = splittable && looseQty > spareLoose;
   const packHint = wholePackHint(item);
   const status = stockStatus(item);
-  const [alternatives, setAlternatives] = useState([]);
-  const [loadingAlts, setLoadingAlts] = useState(false);
-
-  /* Keyed on the medicine alone, NOT on exceedsStock. exceedsStock flips while
-     the cashier is still typing a quantity, and having it in the dependency
-     list refired this request on a keystroke. The molecule's substitutes do
-     not change between "4" and "40", so fetch once per medicine and let the
-     render decide whether to show the result.
-
-     The cancelled flag guards the swap case: replacing the line unmounts this
-     effect mid-flight, and without it a late response from the OLD medicine
-     lands in the NEW line's state and offers substitutes for the wrong drug. */
-  useEffect(() => {
-    if (!item.medicine_id) return undefined;
-
-    let cancelled = false;
-    setLoadingAlts(true);
-
-    api.get(`/medicines/${item.medicine_id}/alternatives`)
-      .then((res) => { if (!cancelled) setAlternatives(res.data.alternatives || []); })
-      .catch(() => { if (!cancelled) setAlternatives([]); })
-      .finally(() => { if (!cancelled) setLoadingAlts(false); });
-
-    return () => { cancelled = true; };
-  }, [item.medicine_id]);
-
   // Substitutes are only worth the counter's attention when this line can't be
   // filled as it stands.
   const needsAlternatives = item.total_stock <= 0 || exceedsStock || item.is_low_stock;
+
+  // The answer is stored with the medicine it belongs to, so it can never be
+  // shown on a line that now holds a different one.
+  const [alts, setAlts] = useState({ medicineId: null, list: [] });
+  const [loadingAlts, setLoadingAlts] = useState(false);
+  const altsLoaded = alts.medicineId === item.medicine_id;
+
+  /* Asked only once the line actually needs substitutes: a fully stocked line
+     shows none, so asking for them cost a request per cart line for nothing.
+
+     Once answered, never asked again for that medicine. exceedsStock flips
+     while the cashier is still typing a quantity, and the molecule's
+     substitutes do not change between "4" and "40" — the render decides
+     whether to show what was already fetched.
+
+     A failed request is NOT remembered as an answer, so the next time the line
+     needs substitutes it asks again; it does not retry in a loop while it
+     stays short.
+
+     The cancelled flag guards a late response: the line being swapped or
+     removed, or no longer needing substitutes, abandons the request, and its
+     answer must not land in state that has moved on. */
+  useEffect(() => {
+    if (!item.medicine_id || !needsAlternatives || altsLoaded) return undefined;
+
+    const medicineId = item.medicine_id;
+    let cancelled = false;
+    setLoadingAlts(true);
+
+    api.get(`/medicines/${medicineId}/alternatives`)
+      .then((res) => { if (!cancelled) setAlts({ medicineId, list: res.data.alternatives || [] }); })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setLoadingAlts(false); });
+
+    return () => {
+      cancelled = true;
+      setLoadingAlts(false);
+    };
+  }, [item.medicine_id, needsAlternatives, altsLoaded]);
+
+  const alternatives = altsLoaded ? alts.list : [];
   const showAlternatives = needsAlternatives && alternatives.length > 0;
 
   return (
