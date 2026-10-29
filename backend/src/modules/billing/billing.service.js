@@ -9,7 +9,7 @@ const {
 const { AppError } = require('../../utils/AppError');
 const { assertCanAccess } = require('../../utils/authz');
 const { logAudit } = require('../../utils/audit');
-const { getAvailableBatchesFEFO } = require('../inventory/inventory.service');
+const { getAvailableBatchesFEFOForMedicines } = require('../inventory/inventory.service');
 const { checkAdherenceWarnings, recordAcknowledgments } = require('../chronic-care/chronic-care.service');
 const logger = require('../../utils/logger');
 
@@ -86,11 +86,36 @@ async function createBill({ customer_name, customer_phone, customer_id, payment_
   // Sealed units and loose units are resolved together, against ONE view of
   // each batch: a strip sold whole is a strip that can no longer be opened for
   // tablets, and two independent passes would each believe they had it.
+  //
+  // Every medicine's batches come back in one read rather than one each; the
+  // loop below still walks the cart in order, so the first line that cannot be
+  // filled is still the one reported.
+  //
+  // If that one read is refused by the database, the cart is resolved one
+  // medicine at a time instead — the order the lookups ran in before they were
+  // batched — so a short line ahead of the failing read is still the error the
+  // cashier sees, and a read that fails for good still fails the bill with
+  // DB_ERROR. Each of those reads is the same guarded lookup. A response that
+  // came back but cannot be trusted (no row count, too many pages) is NOT
+  // retried this way: that is not an outage, and the per-medicine path must not
+  // become a way around the truncation guard.
   const cart = mergeCartItems(items);
+  let batchesByMedicine = null;
+  try {
+    batchesByMedicine = await getAvailableBatchesFEFOForMedicines(cart.map((item) => item.medicine_id));
+  } catch (err) {
+    if (!err.fefoQueryError) throw err;
+    logger.warn(
+      { reason: err.fefoQueryError.message, code: err.fefoQueryError.code, medicines: cart.length },
+      'Bulk FEFO lookup failed; resolving the cart one medicine at a time'
+    );
+  }
   const resolvedItems = [];
   for (const item of cart) {
     const looseQty = Number(item.loose_qty) || 0;
-    const batches = await getAvailableBatchesFEFO(item.medicine_id);
+    const batches = batchesByMedicine
+      ? batchesByMedicine.get(item.medicine_id)
+      : (await getAvailableBatchesFEFOForMedicines([item.medicine_id])).get(item.medicine_id);
 
     // "This product is not sold loose" and "there aren't enough of it" are
     // different problems with different remedies, so they get different errors

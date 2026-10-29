@@ -67,6 +67,34 @@ async function listBatchesForMedicine(medicineId, actor, { includeExpired = fals
   return (data || []).map((row) => pick(row, staffColumns));
 }
 
+// What the FEFO allocator (billing/fefo.js) reads from a batch. Shared by the
+// single-medicine and the bulk lookup so the two cannot drift apart.
+const FEFO_COLUMNS = 'id, batch_no, exp_date, mrp, selling_price, stock_qty, expiry_status';
+const FEFO_LOOSE_COLUMNS = `${FEFO_COLUMNS}, sealed_qty, loose_qty, effective_content_quantity, effective_content_unit, loose_sale_supported`;
+
+/* Which batch is sold first. Nearest expiry first (FEFO); among batches with
+   the SAME expiry, the one entered first (created_at), then id so the order
+   is total.
+
+   created_at is when the batch row was written — the column default now(),
+   set on every path (manual entry, purchase receipt, invoice approval) — NOT
+   when the goods physically arrived. Batches written in one transaction (one
+   receipt, one invoice) share it, and id decides between them. This rule is
+   for determinism; no business rule for equal-expiry batches has been
+   defined, and choosing one (receipt order, price) is the owner's decision.
+
+   Same-expiry batches are common, not an edge case: invoice import normalises
+   every expiry to the last day of its month. Ordered by exp_date alone, their
+   order was whatever the query plan produced — and it differs between plans:
+   on PostgreSQL 16 the single-medicine and the bulk query returned tied
+   batches in different orders for about a third of medicines. Those batches
+   can carry different prices, so the plan was choosing what a bill charged.
+   A total order makes the choice the same on every path and every run. */
+const fefoOrder = (query) => query
+  .order('exp_date', { ascending: true })
+  .order('created_at', { ascending: true })
+  .order('id', { ascending: true });
+
 // FEFO: batches with stock > 0, nearest expiry first
 // Used by Billing module — tells it which batch to sell from
 //
@@ -82,16 +110,11 @@ async function getAvailableBatchesFEFO(medicineId) {
   // it did before Module 27.
   const migrated = await hasLooseUnits();
 
-  let query = supabase
+  let query = fefoOrder(supabase
     .from('batches_with_stock')
-    .select(
-      migrated
-        ? 'id, batch_no, exp_date, mrp, selling_price, stock_qty, expiry_status, sealed_qty, loose_qty, effective_content_quantity, effective_content_unit, loose_sale_supported'
-        : 'id, batch_no, exp_date, mrp, selling_price, stock_qty, expiry_status'
-    )
+    .select(migrated ? FEFO_LOOSE_COLUMNS : FEFO_COLUMNS)
     .eq('medicine_id', medicineId)
-    .gte('exp_date', getISTDateString()) // exclude expired
-    .order('exp_date', { ascending: true });
+    .gte('exp_date', getISTDateString())); // exclude expired
 
   query = migrated
     ? query.or('stock_qty.gt.0,loose_qty.gt.0')
@@ -100,6 +123,105 @@ async function getAvailableBatchesFEFO(medicineId) {
   const { data, error } = await query;
   if (error) throw new AppError('Failed to fetch available batches.', 500, 'DB_ERROR');
   return data;
+}
+
+// Medicine ids per request. Keeps the `in.(…)` list well inside URL limits for
+// the largest cart a 10kb JSON body can carry; a normal bill is one request.
+const FEFO_IN_CHUNK = 100;
+// A runaway guard for the paged fallback below, not a business limit.
+const FEFO_MAX_PAGES = 50;
+
+/* The one error this lookup raises. When the DATABASE refused the query, the
+   PostgREST error rides along as `fefoQueryError`, so a caller can tell "the
+   read failed" from "the read came back but cannot be trusted" (no row count,
+   too many pages) — and log the cause. It never reaches the HTTP response:
+   errorHandler serialises only code, message and details. */
+const fefoLookupFailed = (queryError) => Object.assign(
+  new AppError('Failed to fetch available batches.', 500, 'DB_ERROR'),
+  queryError ? { fefoQueryError: queryError } : {}
+);
+
+/**
+ * getAvailableBatchesFEFO for a whole cart: the same filter, columns and
+ * order, one query for every medicine instead of one query each. Returns a Map
+ * holding an entry for EVERY requested id, in the order given — an empty array
+ * for a medicine with nothing on sale.
+ *
+ * Grouping keeps each medicine's rows in the order the query returned them, so
+ * every group is in fefoOrder, exactly as getAvailableBatchesFEFO returns it.
+ *
+ * NEVER SILENTLY TRUNCATED. PostgREST caps a response at the project's
+ * max_rows (1000 by default on Supabase, and configurable), and a cut list
+ * would read as "insufficient stock". Without a count a capped response is
+ * indistinguishable from a complete one (Content-Range: 0-999/*), so the exact
+ * count travels in the same request; when it says rows were withheld, the rest
+ * are read in pages of the size the server just proved it returns, continuing
+ * in the same total order.
+ *
+ * The count is not free: to produce it PostgREST evaluates the filtered view a
+ * second time in the same statement.
+ */
+async function getAvailableBatchesFEFOForMedicines(medicineIds) {
+  const ids = [...new Set(medicineIds || [])];
+  const groups = new Map(ids.map((id) => [id, []]));
+  if (!ids.length) return groups;
+
+  const migrated = await hasLooseUnits();
+  const today = getISTDateString();
+
+  const scope = (part, options) => {
+    const query = fefoOrder(supabase
+      .from('batches_with_stock')
+      .select(`medicine_id, ${migrated ? FEFO_LOOSE_COLUMNS : FEFO_COLUMNS}`, options)
+      .in('medicine_id', part)
+      .gte('exp_date', today)); // exclude expired, same IST "today" as the single lookup
+    return migrated ? query.or('stock_qty.gt.0,loose_qty.gt.0') : query.gt('stock_qty', 0);
+  };
+
+  for (let i = 0; i < ids.length; i += FEFO_IN_CHUNK) {
+    const part = ids.slice(i, i + FEFO_IN_CHUNK);
+    const { data, error, count } = await scope(part, { count: 'exact' });
+    if (error) throw fefoLookupFailed(error);
+
+    const rows = data || [];
+    if (!Number.isFinite(count)) {
+      // Asked for, so its absence means the response cannot vouch for itself.
+      logger.error({ medicines: part.length, rows: rows.length }, 'FEFO batch lookup returned no row count');
+      throw fefoLookupFailed();
+    }
+
+    if (count > rows.length) {
+      const pageSize = rows.length;
+      if (!pageSize || Math.ceil(count / pageSize) > FEFO_MAX_PAGES) {
+        logger.error({ medicines: part.length, count, pageSize }, 'FEFO batch lookup cannot be paged safely');
+        throw fefoLookupFailed();
+      }
+      logger.warn({ medicines: part.length, count, pageSize }, 'FEFO batch lookup exceeded the row cap; paging');
+
+      // The first response is page one of the same total order, so reading
+      // continues after it. Pages are separate requests, so a sale between two
+      // of them can shift a row across a page boundary; de-duplicating by id
+      // keeps one copy. The read is advisory either way — create_bill_atomic
+      // re-checks every batch.
+      const seen = new Set(rows.map((row) => row.id));
+      for (let page = 2, offset = pageSize; ; page += 1, offset += pageSize) {
+        const { data: more, error: pageError } = await scope(part).range(offset, offset + pageSize - 1);
+        if (pageError) throw fefoLookupFailed(pageError);
+        for (const row of more || []) {
+          if (!seen.has(row.id)) { seen.add(row.id); rows.push(row); }
+        }
+        if (!more || more.length < pageSize || rows.length >= count) break;
+        if (page >= FEFO_MAX_PAGES) {
+          logger.error({ medicines: part.length, count, pageSize }, 'FEFO batch lookup exceeded the page guard');
+          throw fefoLookupFailed();
+        }
+      }
+    }
+
+    for (const row of rows) groups.get(row.medicine_id)?.push(row);
+  }
+
+  return groups;
 }
 
 async function getBatchById(batchId) {
@@ -433,6 +555,7 @@ async function getLooseMovements(batchId, { limit = 50 } = {}) {
 
 module.exports = {
   getInventoryOverview, listBatchesForMedicine, getAvailableBatchesFEFO,
+  getAvailableBatchesFEFOForMedicines,
   getBatchById, getExpiredBatches, addBatch, adjustStock,
   writeOffExpiredBatch, getLedgerMovements, appendLedger,
   appendLooseLedger, getLooseMovements,
