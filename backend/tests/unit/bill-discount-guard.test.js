@@ -14,7 +14,17 @@ jest.mock('../../src/modules/billing/billing.repository', () => ({
   getBillItems: jest.fn(async () => []),
   getMedicineName: jest.fn(async () => 'Dolo 650'),
 }));
-jest.mock('../../src/modules/inventory/inventory.service', () => ({ getAvailableBatchesFEFO: jest.fn() }));
+jest.mock('../../src/modules/inventory/inventory.service', () => {
+  const getAvailableBatchesFEFO = jest.fn();
+  return {
+    getAvailableBatchesFEFO,
+    // createBill reads the whole cart at once; it is answered from the same
+    // per-medicine fixtures below.
+    getAvailableBatchesFEFOForMedicines: jest.fn(async (ids) => new Map(
+      await Promise.all(ids.map(async (id) => [id, await getAvailableBatchesFEFO(id)]))
+    )),
+  };
+});
 jest.mock('../../src/modules/chronic-care/chronic-care.service', () => ({
   checkAdherenceWarnings: jest.fn(async () => []),
   recordAcknowledgments: jest.fn(),
